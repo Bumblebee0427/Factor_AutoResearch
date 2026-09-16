@@ -1,0 +1,17 @@
+# Large local datasets are kept out of version control.
+data/*.csv.zip
+data/*.csv
+
+# Python caches and local environments.
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local secrets and environment files.
+.env
+.env.*
+!.env.example
+
+# macOS metadata.
+.DS_Store
