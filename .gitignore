@@ -5,6 +5,9 @@ data/*.csv
 # Python caches and local environments.
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.mypy_cache/
+.coverage
 .venv/
 venv/
 
@@ -15,3 +18,20 @@ venv/
 
 # macOS metadata.
 .DS_Store
+
+# Reproducible outputs and notebook state.
+artifacts/processed/*
+artifacts/experiments/*
+artifacts/frozen/*
+!artifacts/processed/.gitkeep
+!artifacts/experiments/.gitkeep
+!artifacts/frozen/.gitkeep
+outputs/*
+!outputs/figures/
+!outputs/tables/
+outputs/figures/*
+outputs/tables/*
+!outputs/figures/.gitkeep
+!outputs/tables/.gitkeep
+.ipynb_checkpoints/
+tmp/
