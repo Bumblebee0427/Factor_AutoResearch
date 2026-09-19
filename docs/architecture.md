@@ -14,7 +14,7 @@ structured outcomes. This repository maps those roles as follows:
 | Deterministic execution | `src/factors/builder.py` |
 | Unified evaluator | `src/evaluation/evaluator.py` |
 | Transparent gatekeeper | `src/research/selector.py` |
-| Memory and policy update | `src/research/memory.py` |
+| Memory and policy update | `src/research/memory.py`, `src/research/failures.py` |
 | Structured experiment trace | `src/utils/logging.py` |
 | Frozen out-of-sample policy | physical parquet split plus `scripts/final_holdout.py` |
 
@@ -26,12 +26,29 @@ multiple-testing discipline.
 ## Restricted LLM boundary
 
 The LLM is a proposal mechanism, not an execution engine. It receives compact cumulative
-research state, selected experiment metrics, and promoted `FactorSpec` recipes, but no raw
+research state, selected experiment metrics, and eligible Promote/Hold `FactorSpec` recipes, but no raw
 rows and no holdout results. Structured output constrains it to a closed feature/operator
 vocabulary. Local code then independently rejects unknown parents, invalid windows, excessive
 complexity, duplicate IDs/formulas, and malformed interactions. Only accepted `FactorSpec`
 objects reach the same deterministic builder and evaluator used by every non-LLM candidate.
 API failures are append-only audit events and trigger the deterministic exploration fallback.
+
+The OpenAI adapter uses the Responses API with GPT-5.6 Luna, standard mode, low reasoning,
+low verbosity, structured Pydantic output, no tools, and remote response storage disabled.
+The local validator remains authoritative even when API schema validation succeeds.
+
+## Evaluation and search comparison
+
+The primary five-day rank IC is reported with a Newey-West HAC t-statistic; the automatic
+bandwidth is at least the target overlap (`horizon - 1`) and also respects a sample-size rule
+of thumb. One-, five-, and ten-day IC diagnostics are retained for every validation fold.
+The naive t-statistic remains in the trace for audit but is not the promotion statistic.
+
+Deterministic and LLM arms use the same panel, folds, gates, candidate budget, and evaluator.
+Search comparison uses only 2013-2015 walk-forward evidence. “Effective new information” is
+defined operationally as a unique candidate that passes integrity checks and produces a
+complete walk-forward record; invalid structured proposals and duplicate formulas remain in
+the denominator. The untouched 2016 parquet is not loaded by the comparison runner.
 
 ## Anthelion-specific adaptations
 

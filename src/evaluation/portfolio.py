@@ -55,6 +55,16 @@ def evaluate_portfolio(
     high_cost_bps: float,
     annualization: int,
 ) -> PortfolioSummary:
+    if sample.empty:
+        return PortfolioSummary(
+            annualized_return=np.nan,
+            net_sharpe=np.nan,
+            high_cost_sharpe=np.nan,
+            max_drawdown=np.nan,
+            turnover=np.nan,
+            return_per_turnover=np.nan,
+            quantile_monotonicity=np.nan,
+        )
     sample = sample.copy()
     sample["weight"] = long_short_weights(sample, quantile)
     sample = sample.sort_values(["symbol", "date"])

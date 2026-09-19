@@ -61,16 +61,16 @@ class FakeParser:
     def parse(self, **kwargs):
         self.call = kwargs
         return SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(parsed=self.batch))]
+            output_parsed=self.batch,
+            id="resp_fake",
+            usage=SimpleNamespace(model_dump=lambda: {"total_tokens": 123}),
         )
 
 
 def fake_client(batch: FactorProposalBatch):
     parser = FakeParser(batch)
     client = SimpleNamespace(
-        beta=SimpleNamespace(
-            chat=SimpleNamespace(completions=parser),
-        )
+        responses=parser,
     )
     return client, parser
 
@@ -98,7 +98,8 @@ def test_missing_api_key_uses_deterministic_fallback(monkeypatch) -> None:
         generation=1,
         state=ResearchState(),
         recent_records=[],
-        promoted_specs={},
+        parent_specs={},
+        parent_decisions={},
         tested_ids=set(),
     )
 
@@ -123,6 +124,11 @@ def test_structured_proposal_becomes_valid_factor_spec() -> None:
                 interaction_window=None,
                 direction=1,
                 mutation_reason="Reduce turnover while preserving the promoted mechanism.",
+                proposal_type="failure_repair",
+                evidence_factor_ids=["price_parent"],
+                targeted_failure="excessive_turnover",
+                expected_metric_effect="Lower turnover with similar positive IC.",
+                falsification_condition="Retire if high-cost Sharpe is still non-positive.",
             )
         ],
     )
@@ -131,9 +137,10 @@ def test_structured_proposal_becomes_valid_factor_spec() -> None:
 
     result = generator.propose(
         generation=1,
-        state=ResearchState(promoted_factor_ids=["price_parent"]),
-        recent_records=[make_record()],
-        promoted_specs={"price_parent": make_parent()},
+        state=ResearchState(held_factor_ids=["price_parent"]),
+        recent_records=[make_record(decision="HOLD")],
+        parent_specs={"price_parent": make_parent()},
+        parent_decisions={"price_parent": "HOLD"},
         tested_ids={"price_parent"},
     )
 
@@ -141,7 +148,11 @@ def test_structured_proposal_becomes_valid_factor_spec() -> None:
     assert result.reason == "structured_llm_proposals"
     assert result.candidates[0].parent_ids == ("price_parent",)
     assert result.candidates[0].generation == 1
-    assert parser.call["response_format"] is FactorProposalBatch
+    assert parser.call["text_format"] is FactorProposalBatch
+    assert parser.call["reasoning"] == {"mode": "standard", "effort": "low"}
+    assert parser.call["text"] == {"verbosity": "low"}
+    assert "verbosity" not in parser.call
+    assert parser.call["store"] is False
 
 
 def test_unknown_parent_is_rejected() -> None:
@@ -161,6 +172,11 @@ def test_unknown_parent_is_rejected() -> None:
                 interaction_window=None,
                 direction=1,
                 mutation_reason="Smooth an existing mechanism.",
+                proposal_type="failure_repair",
+                evidence_factor_ids=["invented_parent"],
+                targeted_failure="excessive_turnover",
+                expected_metric_effect="Lower turnover.",
+                falsification_condition="Retire if turnover is not lower.",
             )
         ],
     )
@@ -171,13 +187,14 @@ def test_unknown_parent_is_rejected() -> None:
         generation=1,
         state=ResearchState(),
         recent_records=[],
-        promoted_specs={"price_parent": make_parent()},
+        parent_specs={"price_parent": make_parent()},
+        parent_decisions={"price_parent": "PROMOTE"},
         tested_ids=set(),
     )
 
     assert not result.used_llm
     assert result.reason == "no_valid_llm_proposals"
-    assert "parent is not in promoted library" in result.rejected[0]
+    assert "parent is not an eligible HOLD/PROMOTE factor" in result.rejected[0]
 
 
 def test_llm_context_excludes_raw_data_and_holdout_year() -> None:
@@ -186,7 +203,8 @@ def test_llm_context_excludes_raw_data_and_holdout_year() -> None:
         generation=1,
         state=ResearchState(promoted_factor_ids=["price_parent"]),
         recent_records=[make_record()],
-        promoted_specs={"price_parent": make_parent()},
+        parent_specs={"price_parent": make_parent()},
+        parent_decisions={"price_parent": "PROMOTE"},
     )
 
     assert context["constraints"]["raw_data_available_to_llm"] is False

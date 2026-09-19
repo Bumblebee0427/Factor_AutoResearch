@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +32,15 @@ class ExperimentRecord:
     residual_ic: float | None
     decision: str
     reasons: tuple[str, ...]
+    failure_codes: tuple[str, ...] = ()
+    multi_horizon_mean_ic: dict[str, float] = field(default_factory=dict)
+    fold_ic_sign_consistency: float | None = None
+    naive_ic_tstat: float | None = None
+    proposal_type: str = "deterministic"
+    evidence_factor_ids: tuple[str, ...] = ()
+    targeted_failure: str | None = None
+    expected_metric_effect: str | None = None
+    falsification_condition: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -54,13 +63,16 @@ class ExperimentStore:
             "factor_id": record.factor_id,
             "parents": "|".join(record.parent_ids),
             "family": record.family,
+            "proposal_type": record.proposal_type,
             "mean_rank_ic": record.mean_rank_ic,
             "ic_tstat": record.ic_tstat,
+            "naive_ic_tstat": record.naive_ic_tstat,
             "net_sharpe": record.long_short_sharpe,
             "high_cost_sharpe": record.high_cost_sharpe,
             "turnover": record.turnover,
             "redundancy_corr": record.redundancy_corr,
             "decision": record.decision,
+            "failure_codes": "|".join(record.failure_codes),
             "reasons": "|".join(record.reasons),
         }
         exists = self.csv_path.exists()
@@ -73,6 +85,14 @@ class ExperimentStore:
     def append_generation_event(self, payload: dict[str, Any]) -> None:
         with self.generation_events_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, sort_keys=True, default=str) + "\n")
+
+    def write_research_state(self, payload: dict[str, Any]) -> Path:
+        path = self.directory / "research_state.json"
+        path.write_text(
+            json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n",
+            encoding="utf-8",
+        )
+        return path
 
     def write_family_tree(self, records: list[ExperimentRecord]) -> Path:
         children: dict[str | None, list[ExperimentRecord]] = {}

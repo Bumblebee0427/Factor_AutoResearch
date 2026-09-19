@@ -46,6 +46,11 @@ class FactorSpec:
     direction: int = 1
     mutation_reason: str | None = None
     demonstration_only: bool = False
+    proposal_type: str = "deterministic"
+    evidence_factor_ids: tuple[str, ...] = ()
+    targeted_failure: str | None = None
+    expected_metric_effect: str | None = None
+    falsification_condition: str | None = None
 
     def __post_init__(self) -> None:
         allowed = set(ALLOWED_BASE_FEATURES)
@@ -122,4 +127,5 @@ class FactorSpec:
         values.pop("complexity", None)
         values.pop("canonical_formula", None)
         values["parent_ids"] = tuple(values.get("parent_ids", ()))
+        values["evidence_factor_ids"] = tuple(values.get("evidence_factor_ids", ()))
         return cls(**values)

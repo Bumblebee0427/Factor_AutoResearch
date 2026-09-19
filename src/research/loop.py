@@ -16,6 +16,7 @@ from src.evaluation.validation import HoldoutGuard, folds_from_config
 from src.factors.builder import FactorBuilder
 from src.factors.primitives import future_return
 from src.factors.schema import FactorSpec
+from src.research.failures import classify_failure_reasons
 from src.research.generator import exploration_candidates, seed_candidates
 from src.research.llm_generator import LLMFactorGenerator
 from src.research.memory import ResearchState, update_state
@@ -26,7 +27,13 @@ from src.utils.logging import ExperimentRecord, ExperimentStore
 
 
 class ResearchLoop:
-    def __init__(self, config: dict, panel: pd.DataFrame | None = None) -> None:
+    def __init__(
+        self,
+        config: dict,
+        panel: pd.DataFrame | None = None,
+        *,
+        llm_generator: LLMFactorGenerator | None = None,
+    ) -> None:
         self.config = config
         self.panel = panel
         self.builder = FactorBuilder()
@@ -42,10 +49,12 @@ class ResearchLoop:
             "max_proposals_per_parent",
             int(config["search"]["max_llm_proposals_per_parent"]),
         )
-        self.llm_generator = LLMFactorGenerator(llm_config)
+        self.llm_generator = llm_generator or LLMFactorGenerator(llm_config)
         self.records: list[ExperimentRecord] = []
         self.promoted_specs: dict[str, FactorSpec] = {}
         self.promoted_signals: dict[str, pd.Series] = {}
+        self.eligible_parent_specs: dict[str, FactorSpec] = {}
+        self.parent_decisions: dict[str, str] = {}
 
     def dry_run(self) -> dict:
         seeds = seed_candidates()
@@ -61,6 +70,7 @@ class ResearchLoop:
     def _retired_integrity_record(
         self, spec: FactorSpec, reasons: list[str]
     ) -> ExperimentRecord:
+        failure_codes = classify_failure_reasons(reasons, integrity_passed=False)
         return ExperimentRecord(
             factor_id=spec.factor_id,
             generation=spec.generation,
@@ -83,6 +93,12 @@ class ResearchLoop:
             residual_ic=None,
             decision="RETIRE",
             reasons=tuple(reasons),
+            failure_codes=failure_codes,
+            proposal_type=spec.proposal_type,
+            evidence_factor_ids=spec.evidence_factor_ids,
+            targeted_failure=spec.targeted_failure,
+            expected_metric_effect=spec.expected_metric_effect,
+            falsification_condition=spec.falsification_condition,
         )
 
     def evaluate_candidate(
@@ -140,6 +156,7 @@ class ResearchLoop:
             residual_ic=incremental_ic,
         )
         payload = metrics.to_dict()
+        failure_codes = classify_failure_reasons(gate.reasons, integrity_passed=True)
         record = ExperimentRecord(
             factor_id=spec.factor_id,
             generation=spec.generation,
@@ -162,22 +179,43 @@ class ResearchLoop:
             residual_ic=incremental_ic,
             decision=gate.decision,
             reasons=gate.reasons,
+            failure_codes=failure_codes,
+            multi_horizon_mean_ic=metrics.multi_horizon_mean_ic,
+            fold_ic_sign_consistency=metrics.fold_ic_sign_consistency,
+            naive_ic_tstat=metrics._mean("naive_ic_tstat"),
+            proposal_type=spec.proposal_type,
+            evidence_factor_ids=spec.evidence_factor_ids,
+            targeted_failure=spec.targeted_failure,
+            expected_metric_effect=spec.expected_metric_effect,
+            falsification_condition=spec.falsification_condition,
         )
         return record, signal
 
-    def run(self) -> list[ExperimentRecord]:
-        candidates = seed_candidates()
+    def run(
+        self, initial_candidates: list[FactorSpec] | None = None
+    ) -> list[ExperimentRecord]:
+        candidates = list(initial_candidates or seed_candidates())
         max_generations = int(self.config["search"]["generations"])
         max_candidates = int(self.config["search"]["max_candidates"])
         tested_ids: set[str] = set()
+        tested_formulas: set[str] = set()
 
         for generation in range(max_generations):
             generation_records: list[ExperimentRecord] = []
             promoted_this_round: list[FactorSpec] = []
+            duplicate_ids = 0
+            duplicate_formulas = 0
             for spec in candidates:
-                if spec.factor_id in tested_ids or len(self.records) >= max_candidates:
+                if len(self.records) >= max_candidates:
+                    continue
+                if spec.factor_id in tested_ids:
+                    duplicate_ids += 1
+                    continue
+                if spec.canonical_formula in tested_formulas:
+                    duplicate_formulas += 1
                     continue
                 tested_ids.add(spec.factor_id)
+                tested_formulas.add(spec.canonical_formula)
                 record, signal = self.evaluate_candidate(spec)
                 self.records.append(record)
                 generation_records.append(record)
@@ -186,6 +224,29 @@ class ResearchLoop:
                     self.promoted_specs[spec.factor_id] = spec
                     self.promoted_signals[spec.factor_id] = signal
                     promoted_this_round.append(spec)
+                if record.decision in {"PROMOTE", "HOLD"} and signal is not None:
+                    self.eligible_parent_specs[spec.factor_id] = spec
+                    self.parent_decisions[spec.factor_id] = record.decision
+
+            self.store.append_generation_event(
+                {
+                    "event": "evaluation",
+                    "generation": generation,
+                    "proposed_count": len(candidates),
+                    "evaluated_count": len(generation_records),
+                    "duplicate_id_count": duplicate_ids,
+                    "duplicate_formula_count": duplicate_formulas,
+                    "decision_counts": {
+                        decision: sum(
+                            record.decision == decision for record in generation_records
+                        )
+                        for decision in ("PROMOTE", "HOLD", "RETIRE")
+                    },
+                    "informative_count": sum(
+                        record.integrity_passed for record in generation_records
+                    ),
+                }
+            )
 
             self.state = update_state(
                 self.state,
@@ -211,18 +272,26 @@ class ResearchLoop:
                 generation=generation + 1,
                 state=self.state,
                 recent_records=self.records,
-                promoted_specs=self.promoted_specs,
+                parent_specs=self.eligible_parent_specs,
+                parent_decisions=self.parent_decisions,
                 tested_ids=tested_ids,
             )
             self.store.append_generation_event(
                 {
+                    "event": "proposal",
                     "generation": generation + 1,
                     "used_llm": llm_result.used_llm,
                     "reason": llm_result.reason,
+                    "model": llm_result.model,
+                    "raw_proposal_count": llm_result.raw_proposal_count,
+                    "accepted_proposal_count": len(llm_result.candidates),
                     "candidate_ids": [
                         candidate.factor_id for candidate in llm_result.candidates
                     ],
                     "rejected": list(llm_result.rejected),
+                    "response_id": llm_result.response_id,
+                    "usage": llm_result.usage,
+                    "research_summary": llm_result.research_summary,
                 }
             )
             if llm_result.used_llm:
@@ -239,6 +308,19 @@ class ResearchLoop:
             if not candidates:
                 break
         self.store.write_family_tree(self.records)
+        self.store.write_research_state(
+            {
+                "generation": self.state.generation,
+                "promoted_factor_ids": self.state.promoted_factor_ids,
+                "held_factor_ids": self.state.held_factor_ids,
+                "retired_factor_ids": self.state.retired_factor_ids,
+                "informative_factor_ids": self.state.informative_factor_ids,
+                "family_summary": self.state.family_summary_dict(),
+                "failure_taxonomy": self.state.failure_taxonomy,
+                "unexplored_families": self.state.unexplored_families,
+                "search_budget_remaining": self.state.search_budget_remaining,
+            }
+        )
         return self.records
 
     def freeze(self, directory: str | Path) -> dict:

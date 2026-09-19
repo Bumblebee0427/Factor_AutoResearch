@@ -41,8 +41,24 @@ def load_config(path: str | Path) -> dict[str, Any]:
         raise ValueError("Search cap must not exceed the recommended 300 candidates.")
     if config["llm"].get("provider", "openai") != "openai":
         raise ValueError("Only the OpenAI LLM provider is supported.")
+    if config["llm"].get("endpoint", "responses") != "responses":
+        raise ValueError("The LLM generator requires the Responses API.")
+    if config["llm"].get("reasoning_effort", "low") not in {
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+    }:
+        raise ValueError("Unsupported reasoning effort.")
     if int(config["llm"].get("max_proposals_per_generation", 0)) < 1:
         raise ValueError("LLM proposal cap must be positive.")
+    horizons = [int(value) for value in config["evaluation"]["ic_horizons_days"]]
+    if int(config["evaluation"]["prediction_horizon_days"]) not in horizons:
+        raise ValueError("Primary prediction horizon must be included in IC horizons.")
+    if any(horizon < 1 for horizon in horizons):
+        raise ValueError("IC horizons must be positive.")
     if float(config["data"]["fundamental_reporting_lag_days"]) < 0:
         raise ValueError("Fundamental reporting lag cannot be negative.")
     if float(config["data"]["news_availability_lag_days"]) < 0:

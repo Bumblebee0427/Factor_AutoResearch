@@ -9,9 +9,11 @@ import sys
 from pathlib import Path
 
 import pandas as pd
+from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
+load_dotenv(PROJECT_ROOT / ".env")
 
 from src.research.loop import ResearchLoop
 from src.research.generator import seed_candidates
@@ -76,7 +78,9 @@ def main() -> None:
     results = loop.run()
     summary = {
         "evaluated": len(results),
-        "kept": sum(item.decision == "KEEP" for item in results),
+        "promoted": sum(item.decision == "PROMOTE" for item in results),
+        "held": sum(item.decision == "HOLD" for item in results),
+        "retired": sum(item.decision == "RETIRE" for item in results),
         "holdout_evaluated": False,
     }
     if args.freeze:

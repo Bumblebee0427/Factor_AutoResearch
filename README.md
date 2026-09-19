@@ -34,6 +34,8 @@ src/
 ├── research/
 │   ├── generator.py       # Generation-0 seeds and cross-family exploration
 │   ├── llm_generator.py   # Structured LLM proposals with local whitelist validation
+│   ├── failures.py        # Stable failure taxonomy for gates, memory, and prompts
+│   ├── comparison.py      # Search-efficiency and stability comparison metrics
 │   ├── mutator.py         # Bounded exploitation around promoted parents
 │   ├── selector.py        # Pre-committed Promote/Hold/Retire rules
 │   ├── memory.py          # Explicit ResearchState built from prior outcomes
@@ -45,6 +47,7 @@ src/
 scripts/
 ├── prepare_data.py        # Build research_2010_2015 and holdout_2016 separately
 ├── run_loop.py            # Dry-run or execute adaptive research on 2010-2015 only
+├── compare_search.py       # Isolated deterministic/LLM research arms and reports
 └── final_holdout.py       # One-shot evaluation of a frozen library on 2016
 ```
 
@@ -98,7 +101,7 @@ python -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
 export OPENAI_API_KEY="your-key"       # optional; omit for deterministic fallback
-export OPENAI_FACTOR_MODEL="gpt-4o-mini"  # optional model override
+export OPENAI_FACTOR_MODEL="gpt-5.6-luna"  # optional model override
 
 python scripts/prepare_data.py
 python scripts/run_loop.py                  # safe dry-run
@@ -106,6 +109,10 @@ python scripts/run_loop.py --smoke          # one real factor, research panel on
 python scripts/run_loop.py --execute        # research only; never reads 2016
 python scripts/run_loop.py --execute --freeze
 python scripts/final_holdout.py             # exactly once after freeze
+
+python scripts/test_llm_connection.py       # one minimal structured Luna request
+python scripts/compare_search.py --arm deterministic
+python scripts/compare_search.py --arm llm
 
 pytest -q
 ```
@@ -130,14 +137,25 @@ pytest -q
 ## How generation feedback works
 
 Generation 0 is always the fixed, auditable seed library. After each generation, every
-candidate's fold IC, IC t-statistic, positive-fold count, net and stressed-cost Sharpe,
+candidate's 1/5/10-day fold IC, Newey-West IC t-statistic, positive-fold count, net and stressed-cost Sharpe,
 turnover, drawdown, redundancy, residual IC, decision, and rejection reasons are written to
 the experiment log and summarized in `ResearchState`.
 
 For the next generation, promoted factors receive deterministic bounded mutations. When
 `llm.enabled` is true and `OPENAI_API_KEY` is available, the restricted LLM generator also
-receives the cumulative state, a bounded set of prior experiment records, promoted parent
+receives the cumulative state, a bounded set of prior experiment records, eligible Promote/Hold parent
 specifications, the allowed DSL catalog, and remaining budget. Its structured proposals are
 validated again locally for parent lineage, windows, complexity, uniqueness, and allowed
 primitives before evaluation. `artifacts/experiments/generation_events.jsonl` records whether
 the LLM was used and why any proposals were rejected.
+
+`ResearchState` also maintains a stable failure taxonomy (`unstable_ic`, `weak_signal`,
+`cost_sensitivity`, `excessive_turnover`, `redundancy`, and integrity failures) and a
+family-level summary of decision counts, valid evidence, unique formulas, mean/best IC,
+Newey-West significance, turnover, and failure counts. The comparison runner reports first
+promotion index, effective valid-and-novel evidence per ten proposals, duplicate and invalid
+rates, promoted-family entropy, and walk-forward sign stability. It never reads the holdout.
+
+The first deterministic-versus-Luna Low experiment and its negative result are summarized in
+[`docs/experiment_results.md`](docs/experiment_results.md). The generated, fully auditable
+trajectory remains local under `artifacts/experiments/comparisons/`.
