@@ -7,9 +7,9 @@ import pandas as pd
 
 from src.factors.schema import FactorSpec
 from src.research.llm_generator import (
-    FactorProposal,
     FactorProposalBatch,
     LLMFactorGenerator,
+    SingleFactorProposal,
 )
 from src.research.loop import ResearchLoop
 from src.utils.logging import ExperimentRecord
@@ -55,17 +55,16 @@ def test_two_generation_fake_llm_closed_loop(tmp_path) -> None:
     batch = FactorProposalBatch(
         research_summary="Use the promoted quality evidence in a distinct margin recipe.",
         proposals=[
-            FactorProposal(
+            SingleFactorProposal(
                 factor_id="quality_margin_child",
                 parent_ids=["quality_parent"],
+                recipe_kind="single",
                 family="fundamental",
                 hypothesis="Operating margins may confirm durable profitability through a distinct accounting signal.",
                 base_feature="operating_margin",
                 ts_operator="identity",
                 window=None,
                 cs_operator="winsorize_zscore",
-                interaction_feature=None,
-                interaction_window=None,
                 direction=1,
                 mutation_reason="Test a distinct quality primitive after the parent passed.",
                 proposal_type="exploitation",

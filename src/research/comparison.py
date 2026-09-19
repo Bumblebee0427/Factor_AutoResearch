@@ -20,6 +20,27 @@ def _family_entropy(records: list[ExperimentRecord]) -> float:
     return float(raw / math.log(4)) if len(counts) > 1 else 0.0
 
 
+def _has_complete_walk_forward_evidence(record: ExperimentRecord) -> bool:
+    if not record.integrity_passed or not record.fold_metrics:
+        return False
+    required = (
+        "mean_ic",
+        "ic_tstat",
+        "net_sharpe",
+        "high_cost_sharpe",
+        "turnover",
+        "max_drawdown",
+    )
+    return all(
+        int(fold.get("stock_day_observations", 0) or 0) > 0
+        and all(
+            fold.get(field) is not None and np.isfinite(fold[field])
+            for field in required
+        )
+        for fold in record.fold_metrics
+    )
+
+
 def summarize_search(
     records: list[ExperimentRecord],
     generation_events: list[dict],
@@ -49,8 +70,14 @@ def summarize_search(
         for reason in event.get("rejected", [])
     )
     integrity_failures = sum(not record.integrity_passed for record in records)
-    invalid_count = integrity_failures + rejected_proposals
-    informative = [record for record in records if record.integrity_passed]
+    incomplete_evidence = sum(
+        record.integrity_passed and not _has_complete_walk_forward_evidence(record)
+        for record in records
+    )
+    invalid_count = integrity_failures + incomplete_evidence + rejected_proposals
+    informative = [
+        record for record in records if _has_complete_walk_forward_evidence(record)
+    ]
     promoted = [record for record in records if record.decision == "PROMOTE"]
     first_promote = next(
         (

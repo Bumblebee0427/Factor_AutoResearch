@@ -56,6 +56,31 @@ def test_leaky_demo_is_rejected_before_backtest() -> None:
     assert "future return" in " ".join(report.reasons)
 
 
+def test_factor_requires_cross_sectional_variation_on_covered_dates() -> None:
+    panel = pd.DataFrame(
+        {
+            "date": pd.to_datetime(
+                ["2013-01-02", "2013-01-02", "2013-01-03", "2013-01-03"]
+            ),
+            "symbol": ["AAA", "BBB", "AAA", "BBB"],
+            "close": [10.0, 20.0, 11.0, 21.0],
+        }
+    )
+    # Globally this has two values, but it is constant inside every date.
+    factor = pd.Series([0.5, 0.5, 0.6, 0.6])
+
+    report = check_integrity(
+        make_spec(),
+        panel,
+        factor,
+        max_complexity=4,
+        minimum_coverage=0.2,
+    )
+
+    assert not report.passed
+    assert "cross-sectional variation" in " ".join(report.reasons)
+
+
 def test_holdout_is_locked_until_freeze() -> None:
     guard = HoldoutGuard(2016)
     with pytest.raises(RuntimeError, match="locked"):

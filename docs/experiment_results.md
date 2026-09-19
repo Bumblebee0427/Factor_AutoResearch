@@ -14,15 +14,16 @@ one-shot OOS evaluation after a non-empty factor library is frozen.
 
 | Metric | Deterministic | GPT-5.6 Luna Low |
 | --- | ---: | ---: |
-| Candidate proposals | 37 | 55 |
-| Candidates evaluated | 33 | 33 |
+| Candidate proposals | 37 | 49 |
+| Candidates evaluated | 33 | 40 |
 | Candidates to first Promote | Not reached | Not reached |
-| Effective new information per 10 proposals | 8.6486 | 5.8182 |
-| Duplicate-formula rate | 10.81% | 7.27% |
-| Invalid/noncompliant rate | 2.70% | 34.55% |
+| Candidates with complete walk-forward evidence | 31 | 36 |
+| Effective new information per 10 proposals | 8.3784 | 7.3469 |
+| Duplicate-formula rate | 10.81% | 2.04% |
+| Invalid/noncompliant rate | 5.41% | 26.53% |
 | Promoted factors | 0 | 0 |
-| Mean walk-forward IC-sign consistency | 0.7396 | 0.7396 |
-| Positive IC in every fold | 6.25% | 6.25% |
+| Mean walk-forward IC-sign consistency | 0.7527 | 0.7500 |
+| Positive IC in every fold | 6.45% | 5.56% |
 
 “Effective new information” means a unique candidate that passed integrity checks and
 produced complete walk-forward evidence. Rejected and duplicate proposals remain in the
@@ -30,17 +31,20 @@ denominator.
 
 ## Interpretation
 
-The initial Luna Low arm did **not** improve search efficiency. It completed three API calls
-and used 34,430 tokens, but all 18 raw LLM proposals failed deterministic recipe validation.
-Most failures came from populating interaction-only fields in single-feature proposals; two
-interaction recipes also supplied a window for a fundamental interaction feature. The local
-validator prevented those malformed recipes from reaching the evaluator, and deterministic
-fallback produced the same 33 evaluated candidates as the control arm.
+The first flat nullable schema allowed Luna to populate interaction-only fields in
+single-feature proposals, so none of its proposals reached evaluation. Replacing it with a
+nested `anyOf` union made single-factor and interaction recipes structurally exclusive. In
+the final same-code comparison, Luna completed three API calls and used 35,514 tokens. Nine
+LLM proposals passed recipe validation; seven produced complete walk-forward evidence and two
+volatility-adjusted recipes were retired as `degenerate_signal` before backtesting.
 
-This is a useful negative result rather than evidence that LLM-generated factors improve the
-search. A credible next experiment should replace the flat nullable recipe schema with a
-discriminated single-feature/interaction schema or add one bounded validation-feedback retry,
-then repeat the same fixed comparison without changing gates or viewing the 2016 holdout.
+The schema change materially improved the integration, but Luna Low still did **not** improve
+search efficiency. It generated more evaluated information and fewer duplicate formulas, but
+its effective-information yield remained below deterministic search and no candidate was
+promoted. Most remaining schema rejections assigned windows to fundamental features. A next
+schema iteration can model windowed and fundamental feature legs as separate nested unions;
+a bounded validation-feedback retry is another pre-registrable experiment. Neither change
+should alter the gates or expose the 2016 holdout.
 
 No factors passed every promotion gate, so promoted-library diversity and final 2016 OOS
 performance are undefined at this stage. The empty library must not be made non-empty by

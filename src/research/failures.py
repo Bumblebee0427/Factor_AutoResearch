@@ -7,6 +7,7 @@ FAILURE_CODES = (
     "lookahead_or_leakage",
     "insufficient_coverage",
     "integrity_failure",
+    "degenerate_signal",
     "unstable_ic",
     "weak_signal",
     "low_statistical_significance",
@@ -28,6 +29,8 @@ def classify_failure_reasons(
             code = "lookahead_or_leakage"
         elif "coverage" in normalized:
             code = "insufficient_coverage"
+        elif "variation" in normalized or "degenerate" in normalized:
+            code = "degenerate_signal"
         elif "unstable ic" in normalized:
             code = "unstable_ic"
         elif "weak or negative" in normalized:

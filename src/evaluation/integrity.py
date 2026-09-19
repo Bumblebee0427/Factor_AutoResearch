@@ -81,4 +81,15 @@ def check_integrity(
             report.issues.append(
                 IntegrityIssue("constant_factor", "Factor has no variation.")
             )
+        elif finite.any() and "date" in panel:
+            daily_unique = factor[finite].groupby(panel.loc[finite, "date"]).nunique()
+            variable_date_fraction = float((daily_unique > 1).mean())
+            if variable_date_fraction < minimum_coverage:
+                report.issues.append(
+                    IntegrityIssue(
+                        "degenerate_cross_section",
+                        "Factor has cross-sectional variation on only "
+                        f"{variable_date_fraction:.1%} of covered dates.",
+                    )
+                )
     return report

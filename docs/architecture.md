@@ -28,9 +28,11 @@ multiple-testing discipline.
 The LLM is a proposal mechanism, not an execution engine. It receives compact cumulative
 research state, selected experiment metrics, and eligible Promote/Hold `FactorSpec` recipes, but no raw
 rows and no holdout results. Structured output constrains it to a closed feature/operator
-vocabulary. Local code then independently rejects unknown parents, invalid windows, excessive
-complexity, duplicate IDs/formulas, and malformed interactions. Only accepted `FactorSpec`
-objects reach the same deterministic builder and evaluator used by every non-LLM candidate.
+vocabulary. A nested union makes single-factor and interaction recipes mutually exclusive,
+so single-factor output cannot carry interaction-only fields. Local code then independently
+rejects unknown parents, invalid windows, excessive complexity, duplicate IDs/formulas, and
+malformed interactions. Only accepted `FactorSpec` objects reach the same deterministic
+builder and evaluator used by every non-LLM candidate.
 API failures are append-only audit events and trigger the deterministic exploration fallback.
 
 The OpenAI adapter uses the Responses API with GPT-5.6 Luna, standard mode, low reasoning,

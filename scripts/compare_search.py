@@ -64,6 +64,15 @@ def execute_arm(base_config: dict, panel: pd.DataFrame, root: Path, arm: str) ->
     return summary
 
 
+def completed_summaries(root: Path) -> list[dict]:
+    summaries = []
+    for arm in ("deterministic", "llm"):
+        path = root / arm / "summary.json"
+        if path.exists():
+            summaries.append(json.loads(path.read_text(encoding="utf-8")))
+    return summaries
+
+
 def main() -> None:
     args = parse_args()
     config = load_config(args.config)
@@ -87,9 +96,11 @@ def main() -> None:
         )
     run_id = args.run_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     root = PROJECT_ROOT / "artifacts" / "experiments" / "comparisons" / run_id
-    root.mkdir(parents=True, exist_ok=False)
+    root.mkdir(parents=True, exist_ok=True)
     arms = ("deterministic", "llm") if args.arm == "both" else (args.arm,)
-    summaries = [execute_arm(config, panel, root, arm) for arm in arms]
+    for arm in arms:
+        execute_arm(config, panel, root, arm)
+    summaries = completed_summaries(root)
     result = {
         "run_id": run_id,
         "created_at_utc": datetime.now(timezone.utc).isoformat(),

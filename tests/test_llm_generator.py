@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
+
+import pytest
+from pydantic import ValidationError
 
 from src.factors.schema import FactorSpec
 from src.research.llm_generator import (
-    FactorProposal,
     FactorProposalBatch,
     LLMFactorGenerator,
+    SingleFactorProposal,
 )
 from src.research.memory import ResearchState
 from src.utils.logging import ExperimentRecord
@@ -107,21 +111,61 @@ def test_missing_api_key_uses_deterministic_fallback(monkeypatch) -> None:
     assert result.reason == "missing_api_key"
 
 
+def test_proposal_union_is_nested_and_single_recipe_cannot_carry_interaction_fields() -> (
+    None
+):
+    schema = FactorProposalBatch.schema()
+    encoded = json.dumps(schema)
+
+    assert schema["type"] == "object"
+    assert "anyOf" not in schema
+    assert encoded.count("anyOf") == 1
+    assert "allOf" not in encoded
+
+    with pytest.raises(ValidationError):
+        FactorProposalBatch.parse_obj(
+            {
+                "research_summary": "Malformed single recipe.",
+                "proposals": [
+                    {
+                        "factor_id": "bad_single",
+                        "parent_ids": [],
+                        "hypothesis": "A single feature should not carry an interaction leg.",
+                        "direction": 1,
+                        "mutation_reason": "Schema boundary test.",
+                        "proposal_type": "exploration",
+                        "evidence_factor_ids": [],
+                        "targeted_failure": "none",
+                        "expected_metric_effect": "Unknown.",
+                        "falsification_condition": "Retire if unstable.",
+                        "recipe_kind": "single",
+                        "family": "price",
+                        "base_feature": "return",
+                        "ts_operator": "identity",
+                        "window": 20,
+                        "cs_operator": "rank",
+                        "interaction_feature": "volatility",
+                        "interaction_window": 20,
+                    }
+                ],
+            }
+        )
+
+
 def test_structured_proposal_becomes_valid_factor_spec() -> None:
     batch = FactorProposalBatch(
         research_summary="Turnover is acceptable; test a smoother continuation variant.",
         proposals=[
-            FactorProposal(
+            SingleFactorProposal(
                 factor_id="price_parent_smooth",
                 parent_ids=["price_parent"],
+                recipe_kind="single",
                 family="price",
                 hypothesis="Smoothing medium-term returns may retain continuation while reducing noisy turnover.",
                 base_feature="return",
                 ts_operator="rolling_mean",
                 window=20,
                 cs_operator="rank",
-                interaction_feature=None,
-                interaction_window=None,
                 direction=1,
                 mutation_reason="Reduce turnover while preserving the promoted mechanism.",
                 proposal_type="failure_repair",
@@ -159,17 +203,16 @@ def test_unknown_parent_is_rejected() -> None:
     batch = FactorProposalBatch(
         research_summary="Try a continuation variant.",
         proposals=[
-            FactorProposal(
+            SingleFactorProposal(
                 factor_id="orphan_factor",
                 parent_ids=["invented_parent"],
+                recipe_kind="single",
                 family="price",
                 hypothesis="A smoother continuation signal could lower turnover without losing persistence.",
                 base_feature="return",
                 ts_operator="rolling_mean",
                 window=20,
                 cs_operator="rank",
-                interaction_feature=None,
-                interaction_window=None,
                 direction=1,
                 mutation_reason="Smooth an existing mechanism.",
                 proposal_type="failure_repair",

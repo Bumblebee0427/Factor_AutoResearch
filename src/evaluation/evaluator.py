@@ -39,7 +39,9 @@ class EvaluationResult:
     folds: tuple[FoldMetrics, ...]
 
     def _mean(self, field: str) -> float:
-        return float(np.nanmean([getattr(fold, field) for fold in self.folds]))
+        values = np.asarray([getattr(fold, field) for fold in self.folds], dtype=float)
+        finite = values[np.isfinite(values)]
+        return float(finite.mean()) if finite.size else np.nan
 
     @property
     def mean_ic(self) -> float:
@@ -63,7 +65,9 @@ class EvaluationResult:
 
     @property
     def worst_drawdown(self) -> float:
-        return float(np.nanmin([fold.max_drawdown for fold in self.folds]))
+        values = np.asarray([fold.max_drawdown for fold in self.folds], dtype=float)
+        finite = values[np.isfinite(values)]
+        return float(finite.min()) if finite.size else np.nan
 
     @property
     def positive_ic_folds(self) -> int:
@@ -72,24 +76,29 @@ class EvaluationResult:
     @property
     def multi_horizon_mean_ic(self) -> dict[str, float]:
         horizons = {horizon for fold in self.folds for horizon in fold.multi_horizon_ic}
-        return {
-            horizon: float(
-                np.nanmean(
-                    [
-                        fold.multi_horizon_ic[horizon]["mean_ic"]
-                        for fold in self.folds
-                        if horizon in fold.multi_horizon_ic
-                    ]
-                )
+        means = {}
+        for horizon in sorted(horizons, key=lambda value: int(value.rstrip("d"))):
+            values = np.asarray(
+                [
+                    fold.multi_horizon_ic[horizon]["mean_ic"]
+                    for fold in self.folds
+                    if horizon in fold.multi_horizon_ic
+                ],
+                dtype=float,
             )
-            for horizon in sorted(horizons, key=lambda value: int(value.rstrip("d")))
-        }
+            finite = values[np.isfinite(values)]
+            means[horizon] = float(finite.mean()) if finite.size else np.nan
+        return means
 
     @property
     def fold_ic_sign_consistency(self) -> float:
         if not self.folds:
             return np.nan
-        signs = np.sign([fold.mean_ic for fold in self.folds])
+        values = np.asarray([fold.mean_ic for fold in self.folds], dtype=float)
+        finite = values[np.isfinite(values)]
+        if not finite.size:
+            return np.nan
+        signs = np.sign(finite)
         return float(max((signs > 0).mean(), (signs < 0).mean()))
 
     def to_dict(self) -> dict:

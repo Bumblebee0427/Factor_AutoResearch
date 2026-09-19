@@ -6,54 +6,41 @@ import json
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from src.factors.schema import FactorSpec
 from src.research.memory import ResearchState
 from src.utils.logging import ExperimentRecord
 
 
-class FactorProposal(BaseModel):
+FeatureName = Literal[
+    "return",
+    "volatility",
+    "volume_shock",
+    "distance_to_high",
+    "after_tax_roe",
+    "operating_margin",
+    "profit_margin",
+    "earnings_yield",
+    "asset_growth",
+    "news_volume",
+]
+TimeSeriesOperator = Literal["identity", "rolling_mean", "vol_adjust"]
+CrossSectionalOperator = Literal[
+    "rank", "zscore", "winsorize", "winsorize_zscore", "sign"
+]
+
+
+class ProposalEvidence(BaseModel):
     factor_id: str
-    parent_ids: list[str] = Field(default_factory=list)
-    family: Literal["price", "fundamental", "news", "interaction"]
+    parent_ids: list[str]
     hypothesis: str
-    base_feature: Literal[
-        "return",
-        "volatility",
-        "volume_shock",
-        "distance_to_high",
-        "after_tax_roe",
-        "operating_margin",
-        "profit_margin",
-        "earnings_yield",
-        "asset_growth",
-        "news_volume",
-    ]
-    ts_operator: Literal["identity", "rolling_mean", "vol_adjust"] | None = None
-    window: int | None = None
-    cs_operator: Literal[
-        "rank", "zscore", "winsorize", "winsorize_zscore", "sign"
-    ] | None = None
-    interaction_feature: Literal[
-        "return",
-        "volatility",
-        "volume_shock",
-        "distance_to_high",
-        "after_tax_roe",
-        "operating_margin",
-        "profit_margin",
-        "earnings_yield",
-        "asset_growth",
-        "news_volume",
-    ] | None = None
-    interaction_window: int | None = None
     direction: Literal[-1, 1]
     mutation_reason: str
     proposal_type: Literal["exploitation", "failure_repair", "exploration"]
-    evidence_factor_ids: list[str] = Field(default_factory=list)
+    evidence_factor_ids: list[str]
     targeted_failure: Literal[
         "none",
         "unstable_ic",
@@ -71,6 +58,29 @@ class FactorProposal(BaseModel):
 
     class Config:
         extra = "forbid"
+
+
+class SingleFactorProposal(ProposalEvidence):
+    recipe_kind: Literal["single"]
+    family: Literal["price", "fundamental", "news"]
+    base_feature: FeatureName
+    ts_operator: TimeSeriesOperator | None
+    window: int | None
+    cs_operator: CrossSectionalOperator | None
+
+
+class InteractionFactorProposal(ProposalEvidence):
+    recipe_kind: Literal["interaction"]
+    family: Literal["interaction"]
+    base_feature: FeatureName
+    ts_operator: TimeSeriesOperator | None
+    window: int | None
+    cs_operator: CrossSectionalOperator | None
+    interaction_feature: FeatureName
+    interaction_window: int | None
+
+
+FactorProposal = Union[SingleFactorProposal, InteractionFactorProposal]
 
 
 class FactorProposalBatch(BaseModel):
@@ -111,11 +121,10 @@ proposal must always use empty parent_ids, even when its evidence_factor_ids cit
 tests. If there are no promoted parents, use failure_repair on eligible HOLD parents and
 parent-free exploration; do not emit exploitation proposals.
 
-The field rules are strict. Set interaction_feature and interaction_window to null for
-every price, fundamental, or news proposal. Use family="interaction" if and only if
-interaction_feature is non-null. Fundamental features never have a window; windowed
-price/news features require one allowed window. Do not copy a parent's second feature
-unless the new proposal is explicitly an interaction-family recipe.
+The recipe schema is a strict union. Choose recipe_kind="single" for price, fundamental,
+or news proposals; that object has no interaction fields. Choose recipe_kind="interaction"
+only for an interaction-family recipe; that object requires interaction_feature. Fundamental
+features never have a window; windowed price/news features require one allowed window.
 
 Every proposal must have a unique snake_case ID, an ex-ante economic mechanism, evidence
 for the change, an expected metric effect, and a falsification condition. Do not reverse a
@@ -278,11 +287,12 @@ class LLMFactorGenerator:
                 },
                 "field_rules": {
                     "single_feature_family": (
-                        "price/fundamental/news require interaction_feature=null and "
-                        "interaction_window=null"
+                        "recipe_kind=single and family=price/fundamental/news; this "
+                        "schema has no interaction fields"
                     ),
                     "interaction_family": (
-                        "family=interaction requires a non-null interaction_feature"
+                        "recipe_kind=interaction and family=interaction; "
+                        "interaction_feature is required"
                     ),
                     "fundamental_window": (
                         "after_tax_roe/operating_margin/profit_margin/earnings_yield/"
@@ -328,6 +338,11 @@ class LLMFactorGenerator:
 
         for proposal in batch.proposals[:max_total]:
             reason_prefix = proposal.factor_id or "unnamed"
+            is_interaction = isinstance(proposal, InteractionFactorProposal)
+            interaction_feature = (
+                proposal.interaction_feature if is_interaction else None
+            )
+            interaction_window = proposal.interaction_window if is_interaction else None
             if not re.fullmatch(r"[A-Za-z0-9_]+", proposal.factor_id):
                 rejected.append(f"{reason_prefix}: invalid factor_id")
                 continue
@@ -374,22 +389,6 @@ class LLMFactorGenerator:
                 )
                 continue
             if (
-                proposal.family == "interaction"
-                and proposal.interaction_feature is None
-            ):
-                rejected.append(
-                    f"{reason_prefix}: interaction family needs two features"
-                )
-                continue
-            if (
-                proposal.family != "interaction"
-                and proposal.interaction_feature is not None
-            ):
-                rejected.append(
-                    f"{reason_prefix}: two-feature recipe must use interaction family"
-                )
-                continue
-            if (
                 proposal.base_feature in windowed
                 and proposal.window not in allowed_windows
             ):
@@ -400,23 +399,14 @@ class LLMFactorGenerator:
                     f"{reason_prefix}: fundamental base cannot have a window"
                 )
                 continue
-            if proposal.interaction_feature in windowed:
-                if proposal.interaction_window not in allowed_windows:
+            if interaction_feature in windowed:
+                if interaction_window not in allowed_windows:
                     rejected.append(f"{reason_prefix}: unsupported interaction window")
                     continue
-            elif (
-                proposal.interaction_feature is not None
-                and proposal.interaction_window is not None
-            ):
+            elif interaction_feature is not None and interaction_window is not None:
                 rejected.append(
                     f"{reason_prefix}: fundamental interaction cannot have a window"
                 )
-                continue
-            if (
-                proposal.interaction_feature is None
-                and proposal.interaction_window is not None
-            ):
-                rejected.append(f"{reason_prefix}: interaction window without feature")
                 continue
             if proposal.parent_ids:
                 if any(
@@ -439,8 +429,8 @@ class LLMFactorGenerator:
                     ts_operator=proposal.ts_operator,
                     window=proposal.window,
                     cs_operator=proposal.cs_operator,
-                    interaction_feature=proposal.interaction_feature,
-                    interaction_window=proposal.interaction_window,
+                    interaction_feature=interaction_feature,
+                    interaction_window=interaction_window,
                     direction=proposal.direction,
                     mutation_reason=proposal.mutation_reason,
                     demonstration_only=False,
