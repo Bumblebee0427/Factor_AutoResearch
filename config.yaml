@@ -69,6 +69,36 @@ search:
   max_mutations_per_parent: 3
   max_llm_proposals_per_parent: 3
 
+# XALPHA-inspired V1 controller. These thresholds are research-only and must
+# never be changed after inspecting the 2016 final holdout.
+adaptive_research:
+  max_rounds: 8
+  max_candidate_evaluations: 60
+  stop_rounds_without_improvement: 2
+  minimum_evidence_before_stop: 10
+  pivot_failure_threshold: 3
+  combine_max_parent_correlation: 0.50
+  parent_pool_size: 20
+  elite_archive_size: 12
+  dynamic_leakage_enabled: true
+  dynamic_leakage_sample_tickers: 4
+  dynamic_leakage_cutoffs: 2
+  budgets:
+    improve: 4
+    combine: 3
+    pivot: 6
+  parent_min_mean_ic: 0.0
+  parent_min_positive_folds: 1
+  parent_max_turnover: 2.0
+  elite_min_mean_ic: 0.005
+  elite_min_tstat: 1.0
+  elite_min_positive_folds: 3
+  elite_min_high_cost_sharpe: 0.0
+  elite_max_turnover: 1.5
+  final_correlation_threshold: 0.70
+  min_incremental_ic: 0.001
+  max_final_factors: 8
+
 llm:
   enabled: true
   required: false

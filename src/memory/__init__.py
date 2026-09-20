@@ -1,0 +1,1 @@
+"""Persistent structured research memory."""

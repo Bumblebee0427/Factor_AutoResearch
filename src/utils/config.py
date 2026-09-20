@@ -63,6 +63,15 @@ def load_config(path: str | Path) -> dict[str, Any]:
         raise ValueError("Fundamental reporting lag cannot be negative.")
     if float(config["data"]["news_availability_lag_days"]) < 0:
         raise ValueError("News availability lag cannot be negative.")
+    adaptive = config.get("adaptive_research", {})
+    if int(
+        adaptive.get("max_candidate_evaluations", config["search"]["max_candidates"])
+    ) > int(config["search"]["max_candidates"]):
+        raise ValueError(
+            "Adaptive candidate budget cannot exceed the global search cap."
+        )
+    if int(adaptive.get("max_rounds", 1)) < 1:
+        raise ValueError("Adaptive research requires at least one round.")
     return config
 
 

@@ -62,5 +62,12 @@ def residual_ic(
     frame["factor"] = frame.groupby("date", group_keys=False).apply(
         residualize, include_groups=False
     )
+    # An exactly redundant signal leaves only floating-point regression noise.
+    # Ranking that noise can manufacture a large, meaningless Spearman IC.
+    residual_scale = frame["factor"].abs().max()
+    candidate_scale = frame["candidate"].abs().max()
+    tolerance = 1e-10 * max(1.0, float(candidate_scale))
+    if not np.isfinite(residual_scale) or float(residual_scale) <= tolerance:
+        return 0.0
     _, summary = summarize_ic(frame[["date", "factor", "future_return"]])
     return summary.mean_ic

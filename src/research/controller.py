@@ -1,0 +1,281 @@
+"""Budget-driven XALPHA-inspired research controller for the constrained DSL."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pandas as pd
+
+from src.brains.cross import CrossBrain
+from src.brains.macro import DeterministicMacroBrain
+from src.brains.micro import DeterministicMicroBrain, infer_mechanism
+from src.core.schemas import (
+    DataContract,
+    FactorArtifact,
+    ResearchMemory,
+    ResearchOutcome,
+)
+from src.evaluation.redundancy import mean_cross_sectional_correlation
+from src.memory.store import ResearchMemoryStore
+from src.quality.alignment import check_alignment
+from src.quality.dynamic_leakage import check_dynamic_leakage
+from src.quality.static_checks import check_factor_spec
+from src.research.loop import ResearchLoop
+from src.selection.archive import EliteArchive, ParentPool
+from src.selection.gates import classify_tier
+from src.selection.library import build_final_library
+
+
+class AdaptiveResearchController:
+    def __init__(self, config: dict, panel: pd.DataFrame) -> None:
+        holdout_year = int(config["walk_forward"]["holdout_year"])
+        if panel["date"].dt.year.ge(holdout_year).any():
+            raise RuntimeError("Adaptive research cannot load final-holdout rows.")
+        self.config = config
+        self.panel = panel.sort_values(["symbol", "date"]).reset_index(drop=True)
+        self.settings = dict(config.get("adaptive_research", {}))
+        self.base_loop = ResearchLoop(config, self.panel)
+        self.contract = DataContract.antelion()
+        self.macro = DeterministicMacroBrain(self.settings)
+        self.micro = DeterministicMicroBrain()
+        self.cross = CrossBrain()
+        self.parent_pool = ParentPool(int(self.settings.get("parent_pool_size", 20)))
+        self.elite_archive = EliteArchive(
+            int(self.settings.get("elite_archive_size", 12))
+        )
+        self.memory = ResearchMemory(
+            current_budget=int(
+                self.settings.get(
+                    "max_candidate_evaluations", config["search"]["max_candidates"]
+                )
+            )
+        )
+        self.memory_store = ResearchMemoryStore(
+            Path(config["paths"]["experiment_dir"]) / "adaptive"
+        )
+        self.signals: dict[str, pd.Series] = {}
+        self.outcomes: list[ResearchOutcome] = []
+        self.tested_ids: set[str] = set()
+        self.tested_formulas: set[str] = set()
+        self.total_proposed = 0
+        self.duplicate_count = 0
+
+    @property
+    def max_candidates(self) -> int:
+        return int(
+            self.settings.get(
+                "max_candidate_evaluations", self.config["search"]["max_candidates"]
+            )
+        )
+
+    def run(self) -> list[ResearchOutcome]:
+        remaining = self.max_candidates
+        max_rounds = int(self.settings.get("max_rounds", 8))
+        for round_id in range(max_rounds):
+            parent_correlations: dict[tuple[str, str], float] = {}
+            parent_ids = list(self.parent_pool.items)
+            for index, left_id in enumerate(parent_ids):
+                for right_id in parent_ids[index + 1 :]:
+                    if left_id not in self.signals or right_id not in self.signals:
+                        continue
+                    parent_correlations[
+                        tuple(sorted((left_id, right_id)))
+                    ] = mean_cross_sectional_correlation(
+                        self.signals[left_id],
+                        self.signals[right_id],
+                        self.panel["date"],
+                    )
+            plan = self.macro.plan(
+                self.memory,
+                self.parent_pool.items,
+                self.elite_archive.items,
+                remaining,
+                parent_correlations,
+            )
+            if plan.action == "STOP":
+                self.memory.stopped = True
+                self.memory_store.append_round(
+                    {"round_id": round_id, "plan": plan.to_dict(), "outcomes": []}
+                )
+                break
+            proposals = self.micro.generate(
+                plan, self.parent_pool.items, self.tested_formulas, round_id
+            )
+            self.total_proposed += len(proposals)
+            round_outcomes: list[ResearchOutcome] = []
+            duplicate_count = 0
+            for spec in proposals:
+                if remaining <= 0:
+                    break
+                if (
+                    spec.factor_id in self.tested_ids
+                    or spec.canonical_formula in self.tested_formulas
+                ):
+                    duplicate_count += 1
+                    self.duplicate_count += 1
+                    continue
+                self.tested_ids.add(spec.factor_id)
+                self.tested_formulas.add(spec.canonical_formula)
+                remaining -= 1
+                mechanism = infer_mechanism(spec)
+                reasons: list[str] = []
+                static = check_factor_spec(
+                    spec, self.contract, int(self.config["gates"]["max_complexity"])
+                )
+                reasons.extend(static.reasons)
+                alignment = check_alignment(spec, mechanism)
+                reasons.extend(alignment.reasons)
+                if not reasons and bool(
+                    self.settings.get("dynamic_leakage_enabled", True)
+                ):
+                    leakage = check_dynamic_leakage(
+                        self.panel,
+                        spec,
+                        sample_tickers=int(
+                            self.settings.get("dynamic_leakage_sample_tickers", 4)
+                        ),
+                        cutoffs=int(self.settings.get("dynamic_leakage_cutoffs", 2)),
+                    )
+                    reasons.extend(leakage.reasons)
+                if reasons:
+                    record = self.base_loop._retired_integrity_record(spec, reasons)
+                    signal = None
+                    self.memory.proposal_failure_counts["pre_evaluation_rejection"] = (
+                        self.memory.proposal_failure_counts.get(
+                            "pre_evaluation_rejection", 0
+                        )
+                        + 1
+                    )
+                else:
+                    record, signal = self.base_loop.evaluate_candidate(spec)
+                self.base_loop.records.append(record)
+                self.base_loop.store.append(record)
+                tier = classify_tier(record, self.settings)
+                outcome = ResearchOutcome(
+                    spec, record, tier.tier, mechanism, plan.action
+                )
+                round_outcomes.append(outcome)
+                self.outcomes.append(outcome)
+                if signal is not None:
+                    self.signals[spec.factor_id] = signal
+                if tier.tier in {"PARENT", "ELITE"} and signal is not None:
+                    artifact = FactorArtifact(spec, record, mechanism)
+                    self.parent_pool.add(artifact)
+                    if tier.tier == "ELITE":
+                        self.elite_archive.add(artifact)
+                        self.base_loop.promoted_specs[spec.factor_id] = spec
+                        self.base_loop.promoted_signals[spec.factor_id] = signal
+            summary = {
+                "round_id": round_id,
+                "action": plan.action,
+                "mechanism": plan.mechanism,
+                "proposed": len(proposals),
+                "evaluated": len(round_outcomes),
+                "duplicates": duplicate_count,
+                "tier_counts": {
+                    tier: sum(item.tier == tier for item in round_outcomes)
+                    for tier in ("RETIRED", "PARENT", "ELITE")
+                },
+                "remaining_budget": remaining,
+            }
+            self.cross.update_memory(self.memory, round_outcomes, summary)
+            self.memory_store.append_round(
+                {
+                    "plan": plan.to_dict(),
+                    **summary,
+                    "outcomes": [item.to_dict() for item in round_outcomes],
+                }
+            )
+            self.memory_store.save(self.memory)
+            self.memory_store.checkpoint(round_id, self.memory)
+            if remaining <= 0:
+                break
+        self.base_loop.store.write_family_tree(self.base_loop.records)
+        self.construct_library()
+        return self.outcomes
+
+    def construct_library(self) -> tuple[list[FactorArtifact], list[dict]]:
+        """Build and save a research-only candidate library without opening holdout."""
+        library_config = {
+            **self.settings,
+            "prediction_horizon_days": self.config["evaluation"][
+                "prediction_horizon_days"
+            ],
+        }
+        selected, audit = build_final_library(
+            list(self.elite_archive.items.values()),
+            self.signals,
+            self.panel,
+            library_config,
+        )
+        directory = self.memory_store.directory
+        (directory / "factor_library_candidate.json").write_text(
+            json.dumps([item.spec.to_dict() for item in selected], indent=2) + "\n",
+            encoding="utf-8",
+        )
+        (directory / "library_selection_audit.json").write_text(
+            json.dumps(audit, indent=2, default=str) + "\n", encoding="utf-8"
+        )
+        return selected, audit
+
+    def freeze(self, directory: str | Path) -> dict:
+        freeze_dir = Path(directory)
+        selected, audit = self.construct_library()
+        self.base_loop.promoted_specs = {
+            item.spec.factor_id: item.spec for item in selected
+        }
+        manifest = self.base_loop.freeze(freeze_dir)
+        (freeze_dir / "elite_archive.json").write_text(
+            json.dumps(
+                [item.spec.to_dict() for item in self.elite_archive.items.values()],
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (freeze_dir / "library_selection_audit.json").write_text(
+            json.dumps(audit, indent=2, default=str) + "\n", encoding="utf-8"
+        )
+        (freeze_dir / "research_memory.json").write_text(
+            json.dumps(self.memory.to_dict(), indent=2, default=str) + "\n",
+            encoding="utf-8",
+        )
+        self.memory_store.seal()
+        return manifest
+
+    def summary(self) -> dict:
+        first_elite = next(
+            (
+                index + 1
+                for index, item in enumerate(self.outcomes)
+                if item.tier == "ELITE"
+            ),
+            None,
+        )
+        valid = sum(item.record.integrity_passed for item in self.outcomes)
+        mechanisms = {item.mechanism for item in self.elite_archive.items.values()}
+        stable = [
+            item.record.fold_ic_sign_consistency
+            for item in self.elite_archive.items.values()
+            if item.record.fold_ic_sign_consistency is not None
+        ]
+        denominator = max(1, self.total_proposed)
+        return {
+            "candidates_tested": len(self.outcomes),
+            "candidates_to_first_elite": first_elite,
+            "valid_information_per_10": 10.0 * valid / len(self.outcomes)
+            if self.outcomes
+            else 0.0,
+            "duplicate_formula_ratio": self.duplicate_count / denominator,
+            "invalid_proposal_ratio": 1.0 - valid / len(self.outcomes)
+            if self.outcomes
+            else 0.0,
+            "parent_pool_size": len(self.parent_pool.items),
+            "elite_archive_size": len(self.elite_archive.items),
+            "elite_mechanism_diversity": len(mechanisms),
+            "elite_walk_forward_sign_stability": sum(stable) / len(stable)
+            if stable
+            else None,
+            "holdout_evaluated": False,
+        }

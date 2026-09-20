@@ -6,14 +6,23 @@ fixed temporal validation, and uses structured evidence to guide later generatio
 
 The implementation adapts Huang and Fan (2026),
 [_Beyond Prompting: An Autonomous Framework for Systematic Factor Investing via Agentic AI_](references/2603.14288v1.pdf),
+and the memory-driven Macro/Micro/Cross design in
+[_XALPHA: A Memory-Driven AI Quant Researcher for Hypothesis-to-Code Alpha Discovery_](references/2607.08332v2.pdf),
+plus the resource-aware search and strict feedback/test split in
+[_AutoScientist-Quant: Self-Evolving Coding Agents for Automatic Research in Quantitative Investment_](references/2608.28632v2.pdf),
 to the shorter 2010-2016 Anthelion price, fundamental, and news dataset. The project-specific
 rules are documented in the [instruction](Anthelion_Autonomous_Factor_Research_Instruction.pdf)
-and [Codex reference guide](references/Auto_Factor_Research_Codex_Reference_Guide.pdf).
+and the [XALPHA V1 implementation brief](references/Anthelion_Autonomous_Factor_Researcher_V1_Codex_Instructions.md).
 
 ## Architecture
 
 ```text
 src/
+├── core/                  # DataContract, ResearchPlan, memory, outcome, artifact schemas
+├── brains/
+│   ├── macro.py           # Budget-driven IMPROVE/COMBINE/PIVOT/STOP planning
+│   ├── micro.py           # Constrained mutation, crossover, and refinement
+│   └── cross.py           # GOOD/BAD lessons and cross-cycle memory updates
 ├── data/
 │   ├── loader.py          # Extracted CSV schemas, chunked news loading, source metadata
 │   ├── point_in_time.py   # Availability-date joins and conservative news timing
@@ -31,6 +40,16 @@ src/
 │   ├── validation.py      # Walk-forward folds and holdout firewall
 │   ├── redundancy.py      # Signal correlation and residual/incremental IC
 │   └── evaluator.py       # One common evaluator for every candidate
+├── quality/
+│   ├── static_checks.py   # Forbidden syntax, feature contract, and complexity checks
+│   ├── dynamic_leakage.py # Truncation and future-noise causality tests
+│   └── alignment.py       # Hypothesis/mechanism/formula tri-alignment
+├── selection/
+│   ├── gates.py           # Separate RETIRED/PARENT/ELITE thresholds
+│   ├── archive.py         # Bounded parent pool and persistent elite archive
+│   └── library.py         # Dedupe, correlation, residual-IC, diversity pruning
+├── memory/
+│   └── store.py           # Append-only checkpoints and persistent freeze seal
 ├── research/
 │   ├── generator.py       # Generation-0 seeds and cross-family exploration
 │   ├── llm_generator.py   # Structured LLM proposals with local whitelist validation
@@ -39,14 +58,16 @@ src/
 │   ├── mutator.py         # Bounded exploitation around promoted parents
 │   ├── selector.py        # Pre-committed Promote/Hold/Retire rules
 │   ├── memory.py          # Explicit ResearchState built from prior outcomes
-│   └── loop.py            # Closed-loop orchestration and frozen library creation
+│   ├── loop.py            # Original fixed-generation baseline
+│   └── controller.py      # Adaptive XALPHA-inspired research controller
 └── utils/
     ├── config.py          # Configuration validation and hashing
     └── logging.py         # Append-only records, trajectory table, and lineage tree
 
 scripts/
 ├── prepare_data.py        # Build research_2010_2015 and holdout_2016 separately
-├── run_loop.py            # Dry-run or execute adaptive research on 2010-2015 only
+├── run_loop.py            # Original fixed-generation baseline on 2010-2015 only
+├── run_research.py        # Budget-driven Macro/Micro/Cross V1 entrypoint
 ├── compare_search.py       # Isolated deterministic/LLM research arms and reports
 └── final_holdout.py       # One-shot evaluation of a frozen library on 2016
 ```
@@ -108,6 +129,9 @@ python scripts/run_loop.py                  # safe dry-run
 python scripts/run_loop.py --smoke          # one real factor, research panel only
 python scripts/run_loop.py --execute        # research only; never reads 2016
 python scripts/run_loop.py --execute --freeze
+python scripts/run_research.py --dry-run        # validate adaptive-controller setup
+python scripts/run_research.py                  # adaptive research, 2010-2015 only
+python scripts/run_research.py --execute --freeze
 python scripts/final_holdout.py             # exactly once after freeze
 
 python scripts/test_llm_connection.py       # one minimal structured Luna request
@@ -159,3 +183,18 @@ rates, promoted-family entropy, and walk-forward sign stability. It never reads 
 The first deterministic-versus-Luna Low experiment and its negative result are summarized in
 [`docs/experiment_results.md`](docs/experiment_results.md). The generated, fully auditable
 trajectory remains local under `artifacts/experiments/comparisons/`.
+
+## XALPHA-inspired adaptive V1
+
+The new controller operates at two timescales. The Macro Brain chooses one research action
+and a candidate budget; the Micro Brain creates only valid `FactorSpec` recipes; the Cross
+Brain converts outcomes into bounded GOOD/BAD lessons and mechanism-level statistics. A
+lenient parent pool supports exploration, while the stricter elite archive is persistent.
+Neither archive automatically becomes the final library: freezing performs another pass for
+canonical-formula duplicates, cross-sectional correlation, residual IC, simplicity, and
+mechanism diversity.
+
+This is deliberately not a full reproduction of XALPHA. V1 does not ingest papers at run
+time, implement the complete archetype taxonomy, generate arbitrary executable code, or use
+a multi-agent swarm. Those features would weaken auditability relative to this take-home's
+small dataset and hard final-holdout policy.

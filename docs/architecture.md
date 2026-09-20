@@ -23,6 +23,38 @@ and ticker-local historical transforms, its requirement for an economic rational
 backtest, and its emphasis on turnover, transaction costs, monotonic portfolio sorts, and
 multiple-testing discipline.
 
+## XALPHA-inspired V1 layer
+
+The second reference adds a useful separation of responsibilities without changing the
+trusted evaluator:
+
+| XALPHA concept | V1 implementation | Safety boundary |
+| --- | --- | --- |
+| Macro Brain | `src/brains/macro.py` | Selects action, mechanism, parents, and budget only |
+| Micro Brain | `src/brains/micro.py` | Emits typed `FactorSpec`; never emits Python |
+| Cross Brain | `src/brains/cross.py` | Writes bounded GOOD/BAD lessons and mechanism statistics |
+| Normal parent population | `src/selection/archive.py::ParentPool` | Lenient, bounded, evictable |
+| Elite archive | `src/selection/archive.py::EliteArchive` | Strict, deduplicated, persistent |
+| Adaptive cycle | `src/research/controller.py` | Budget/patience stopping instead of fixed generations |
+| Dynamic leak detector | `src/quality/dynamic_leakage.py` | Truncation and future-noise invariance |
+| Final library builder | `src/selection/library.py` | Correlation/residual-IC pruning after elite selection |
+
+Each round is `plan -> propose -> static/alignment/dynamic checks -> common evaluator ->
+tier -> reflect -> checkpoint`. `IMPROVE` repairs a parent, `COMBINE` crosses distinct
+mechanisms, `PIVOT` explores an under-tested mechanism, and `STOP` freezes the evidence.
+The Macro Brain does not author formulas, and the Cross Brain does not alter metrics.
+
+The implementation follows the project brief rather than reproducing all XALPHA machinery:
+there is no runtime PDF retrieval, 48-archetype ontology, arbitrary code generation, swarm,
+or automatic LightGBM ensemble. The constrained grammar is a deliberate adaptation to make
+lineage, leakage review, and exact replay tractable.
+
+AutoScientist-Quant contributes the single global candidate budget, dynamic
+`IMPROVE/COMBINE/PIVOT/STOP` routing, and the insistence that search feedback be disjoint
+from the final test. V1 applies the same idea to factor discovery and library pruning. It does
+not implement the paper's downstream model/hyperparameter tree search, which the project brief
+explicitly leaves for a later phase.
+
 ## Restricted LLM boundary
 
 The LLM is a proposal mechanism, not an execution engine. It receives compact cumulative
