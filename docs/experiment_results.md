@@ -84,6 +84,38 @@ direction is the product of both parent directions. All 60 candidates passed the
 gate after these fixes. The complete local trajectory is under
 `artifacts/experiments/adaptive_comparisons/mechanism_coverage_v6/`.
 
-The equal-budget adaptive Luna arm is intentionally pending explicit authorization to send
-factor formulas, hypotheses, 2010-2015 aggregate research metrics, and structured research
-memory to the OpenAI API. Raw observations and the 2016 holdout will not be sent.
+## Equal-budget Luna Low adaptive comparison
+
+After explicit authorization, the same 60-candidate protocol was run with Luna Low enabled
+after the common 16-candidate coverage phase. The Macro and Micro calls used structured
+Pydantic output and were locally validated before any recipe reached the evaluator.
+
+| Metric | Deterministic v6 | Luna Low v3 |
+| --- | ---: | ---: |
+| Candidates evaluated | 60 | 60 |
+| Candidates to first Parent | 3 | 3 |
+| Candidates to first Elite | Not reached | Not reached |
+| Effective valid information per 10 | 9.6667 | 9.8333 |
+| Evaluated invalid-proposal rate | 0.0% | 0.0% |
+| Duplicate-formula rate | 0.0% | 0.0% |
+| Mechanisms covered | 8 / 8 | 8 / 8 |
+| LLM calls | 0 | 26 |
+| Raw LLM factor proposals | 0 | 40 |
+| Rejected LLM proposals | 0 | 17 |
+| LLM proposal rejection rate | — | 42.5% |
+| Total LLM tokens | — | 423,035 |
+
+Luna improved the measured valid-information yield only slightly (+0.1667 per 10) and did
+not improve time to first Parent or reach an Elite. Its search allocation was more
+concentrated in price reversal (21 candidates) and cross-domain interactions (17), while
+the deterministic arm distributed more candidates to volatility, price-volume, and
+fundamental-value neighborhoods. The high LLM rejection rate was mostly caused by proposals
+that assigned windows to fundamental base or interaction features; local validation rejected
+them and deterministic fill preserved the fixed candidate budget.
+
+The important distinction is that the `invalid_proposal_rate` in the comparison table counts
+invalid candidates sent to the evaluator and remained zero in both arms. The separate LLM
+proposal rejection rate counts model outputs rejected before evaluation and exposes the
+current prompt/grammar mismatch. No raw market rows or 2016 holdout were sent. The full
+Luna trajectory, per-call usage, plans, rejected proposals, and experiment records are under
+`artifacts/experiments/adaptive_comparisons/luna_low_v3/`.

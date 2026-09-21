@@ -183,9 +183,9 @@ Newey-West significance, turnover, and failure counts. The comparison runner rep
 promotion index, effective valid-and-novel evidence per ten proposals, duplicate and invalid
 rates, promoted-family entropy, and walk-forward sign stability. It never reads the holdout.
 
-The first deterministic-versus-Luna Low experiment and its negative result are summarized in
-[`docs/experiment_results.md`](docs/experiment_results.md). The generated, fully auditable
-trajectory remains local under `artifacts/experiments/comparisons/`.
+The deterministic-versus-Luna experiments and their search-efficiency results are summarized
+in [`docs/experiment_results.md`](docs/experiment_results.md). The generated, fully auditable
+trajectories remain local under `artifacts/experiments/adaptive_comparisons/`.
 
 ## XALPHA-inspired adaptive V1
 
