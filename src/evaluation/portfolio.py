@@ -78,17 +78,31 @@ def evaluate_portfolio(
     net = gross.sub(turnover.mul(cost_bps / 10_000.0), fill_value=0.0)
     net_high = gross.sub(turnover.mul(high_cost_bps / 10_000.0), fill_value=0.0)
 
-    sample["quantile"] = sample.groupby("date")["factor"].transform(
-        lambda values: pd.qcut(
-            values.rank(method="first"), quantile_count, labels=False
+    def assign_quantiles(values: pd.Series) -> pd.Series:
+        assigned = pd.Series(np.nan, index=values.index, dtype=float)
+        valid = values.dropna()
+        # A one-name cross section has no meaningful sort or monotonicity.
+        if len(valid) < 2:
+            return assigned
+        bins = min(quantile_count, len(valid))
+        labels = pd.qcut(
+            valid.rank(method="first"),
+            bins,
+            labels=False,
+            duplicates="drop",
         )
-        + 1
-    )
+        assigned.loc[valid.index] = labels.astype(float).add(1.0)
+        return assigned
+
+    sample["quantile"] = sample.groupby("date")["factor"].transform(assign_quantiles)
     quantile_returns = sample.groupby("quantile")["portfolio_return"].mean()
-    monotonicity = quantile_returns.corr(
-        pd.Series(quantile_returns.index, index=quantile_returns.index),
-        method="spearman",
-    )
+    if len(quantile_returns) < 2 or quantile_returns.nunique(dropna=True) < 2:
+        monotonicity = np.nan
+    else:
+        monotonicity = quantile_returns.corr(
+            pd.Series(quantile_returns.index, index=quantile_returns.index),
+            method="spearman",
+        )
     mean_turnover = float(turnover.mean())
     annualized_return = float(net.mean() * annualization)
     return PortfolioSummary(

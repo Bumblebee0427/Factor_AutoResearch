@@ -8,13 +8,20 @@ from pathlib import Path
 import pandas as pd
 
 from src.brains.cross import CrossBrain
-from src.brains.macro import DeterministicMacroBrain
-from src.brains.micro import DeterministicMicroBrain, infer_mechanism
+from src.brains.macro import DeterministicMacroBrain, LLMMacroBrain, MacroPlanResult
+from src.brains.micro import (
+    AdaptiveLLMMicroBrain,
+    DeterministicMicroBrain,
+    MicroProposalResult,
+    infer_mechanism,
+)
 from src.core.schemas import (
+    MECHANISMS,
     DataContract,
     FactorArtifact,
     ResearchMemory,
     ResearchOutcome,
+    ResearchPlan,
 )
 from src.evaluation.redundancy import mean_cross_sectional_correlation
 from src.memory.store import ResearchMemoryStore
@@ -28,7 +35,15 @@ from src.selection.library import build_final_library
 
 
 class AdaptiveResearchController:
-    def __init__(self, config: dict, panel: pd.DataFrame) -> None:
+    def __init__(
+        self,
+        config: dict,
+        panel: pd.DataFrame,
+        *,
+        use_llm: bool = False,
+        macro_client=None,
+        micro_client=None,
+    ) -> None:
         holdout_year = int(config["walk_forward"]["holdout_year"])
         if panel["date"].dt.year.ge(holdout_year).any():
             raise RuntimeError("Adaptive research cannot load final-holdout rows.")
@@ -39,6 +54,13 @@ class AdaptiveResearchController:
         self.contract = DataContract.antelion()
         self.macro = DeterministicMacroBrain(self.settings)
         self.micro = DeterministicMicroBrain()
+        self.use_llm = use_llm
+        self.llm_macro = LLMMacroBrain(
+            config.get("llm", {}), self.settings, client=macro_client
+        )
+        self.llm_micro = AdaptiveLLMMicroBrain(
+            config.get("llm", {}), self.micro, client=micro_client
+        )
         self.cross = CrossBrain()
         self.parent_pool = ParentPool(int(self.settings.get("parent_pool_size", 20)))
         self.elite_archive = EliteArchive(
@@ -60,6 +82,10 @@ class AdaptiveResearchController:
         self.tested_formulas: set[str] = set()
         self.total_proposed = 0
         self.duplicate_count = 0
+        self.tiers: dict[str, str] = {}
+        self.llm_events: list[dict] = []
+        self.llm_raw_proposals = 0
+        self.llm_rejected_proposals = 0
 
     @property
     def max_candidates(self) -> int:
@@ -73,6 +99,7 @@ class AdaptiveResearchController:
         remaining = self.max_candidates
         max_rounds = int(self.settings.get("max_rounds", 8))
         for round_id in range(max_rounds):
+            coverage_complete = self.macro.coverage_satisfied(self.memory)
             parent_correlations: dict[tuple[str, str], float] = {}
             parent_ids = list(self.parent_pool.items)
             for index, left_id in enumerate(parent_ids):
@@ -86,22 +113,89 @@ class AdaptiveResearchController:
                         self.signals[right_id],
                         self.panel["date"],
                     )
-            plan = self.macro.plan(
+            deterministic_plan = self.macro.plan(
                 self.memory,
                 self.parent_pool.items,
                 self.elite_archive.items,
                 remaining,
                 parent_correlations,
             )
+            plan = deterministic_plan
+            macro_result = MacroPlanResult(None, False, "deterministic_controller")
+            if (
+                self.use_llm
+                and coverage_complete
+                and deterministic_plan.action != "STOP"
+            ):
+                macro_result = self.llm_macro.propose(
+                    self.memory,
+                    self.parent_pool.items,
+                    self.elite_archive.items,
+                    remaining,
+                    parent_correlations,
+                    deterministic_plan,
+                )
+                if macro_result.plan is not None:
+                    plan = macro_result.plan
             if plan.action == "STOP":
                 self.memory.stopped = True
                 self.memory_store.append_round(
                     {"round_id": round_id, "plan": plan.to_dict(), "outcomes": []}
                 )
                 break
-            proposals = self.micro.generate(
-                plan, self.parent_pool.items, self.tested_formulas, round_id
+            micro_result = MicroProposalResult(
+                (), False, "deterministic_mechanism_coverage"
             )
+            if self.use_llm and coverage_complete:
+                micro_result = self.llm_micro.generate(
+                    plan,
+                    self.parent_pool.items,
+                    self.tested_formulas,
+                    self.tested_ids,
+                    self.base_loop.records,
+                    self.tiers,
+                    round_id,
+                    self.max_candidates,
+                )
+                proposals = list(micro_result.candidates)
+                self.llm_raw_proposals += micro_result.raw_proposal_count
+                self.llm_rejected_proposals += len(micro_result.rejected)
+            else:
+                proposals = self.micro.generate(
+                    plan, self.parent_pool.items, self.tested_formulas, round_id
+                )
+            rescue_reason = None
+            if not proposals and remaining > 0:
+                rescue_plan, rescue = self._novelty_rescue(round_id, remaining)
+                if rescue:
+                    plan = rescue_plan
+                    proposals = rescue
+                    rescue_reason = (
+                        "planned neighborhood exhausted; pivoted to an untested formula"
+                    )
+                else:
+                    self.memory.stopped = True
+                    stop_plan = ResearchPlan(
+                        "STOP",
+                        "saturated",
+                        plan.mechanism,
+                        "Stop because every constrained deterministic neighborhood is exhausted.",
+                        (),
+                        "No novel formula remains inside the approved DSL search grid.",
+                        0,
+                    )
+                    self.memory_store.append_round(
+                        {
+                            "round_id": round_id,
+                            "plan": stop_plan.to_dict(),
+                            "outcomes": [],
+                        }
+                    )
+                    break
+            llm_event = self._llm_event(round_id, macro_result, micro_result)
+            llm_event["novelty_rescue"] = rescue_reason
+            self.llm_events.append(llm_event)
+            self._append_llm_event(llm_event)
             self.total_proposed += len(proposals)
             round_outcomes: list[ResearchOutcome] = []
             duplicate_count = 0
@@ -157,6 +251,7 @@ class AdaptiveResearchController:
                 )
                 round_outcomes.append(outcome)
                 self.outcomes.append(outcome)
+                self.tiers[spec.factor_id] = tier.tier
                 if signal is not None:
                     self.signals[spec.factor_id] = signal
                 if tier.tier in {"PARENT", "ELITE"} and signal is not None:
@@ -178,6 +273,8 @@ class AdaptiveResearchController:
                     for tier in ("RETIRED", "PARENT", "ELITE")
                 },
                 "remaining_budget": remaining,
+                "coverage": self.macro.coverage_status(self.memory),
+                "llm": llm_event,
             }
             self.cross.update_memory(self.memory, round_outcomes, summary)
             self.memory_store.append_round(
@@ -194,6 +291,86 @@ class AdaptiveResearchController:
         self.base_loop.store.write_family_tree(self.base_loop.records)
         self.construct_library()
         return self.outcomes
+
+    def _novelty_rescue(
+        self, round_id: int, remaining: int
+    ) -> tuple[ResearchPlan, list]:
+        tested = {
+            mechanism: int(
+                self.memory.mechanism_stats.get(mechanism, {}).get("tested", 0)
+            )
+            for mechanism in MECHANISMS
+        }
+        order = {mechanism: index for index, mechanism in enumerate(MECHANISMS)}
+        budget = min(
+            remaining,
+            int(self.settings.get("budgets", {}).get("pivot", 6)),
+        )
+        for mechanism in sorted(
+            MECHANISMS, key=lambda item: (tested[item], order[item])
+        ):
+            plan = ResearchPlan(
+                "PIVOT",
+                f"novelty_rescue_{mechanism.lower()}",
+                mechanism,
+                "Test a still-unseen formula in the least-sampled available mechanism.",
+                (),
+                "The planned local neighborhood produced no novel candidate.",
+                budget,
+            )
+            proposals = self.micro.generate(
+                plan, self.parent_pool.items, self.tested_formulas, round_id
+            )
+            if proposals:
+                return plan, proposals
+        return (
+            ResearchPlan(
+                "STOP",
+                "saturated",
+                "PRICE_TREND",
+                "Stop because the approved formula grid is exhausted.",
+                (),
+                "No novel constrained candidate remains.",
+                0,
+            ),
+            [],
+        )
+
+    def _llm_event(
+        self,
+        round_id: int,
+        macro: MacroPlanResult,
+        micro: MicroProposalResult,
+    ) -> dict:
+        return {
+            "round_id": round_id,
+            "enabled": self.use_llm,
+            "macro": {
+                "used_llm": macro.used_llm,
+                "reason": macro.reason,
+                "rejected": list(macro.rejected),
+                "response_id": macro.response_id,
+                "model": macro.model,
+                "usage": macro.usage,
+            },
+            "micro": {
+                "used_llm": micro.used_llm,
+                "reason": micro.reason,
+                "raw_proposal_count": micro.raw_proposal_count,
+                "llm_candidate_count": micro.llm_candidate_count,
+                "deterministic_fill_count": micro.deterministic_fill_count,
+                "rejected": list(micro.rejected),
+                "response_id": micro.response_id,
+                "model": micro.model,
+                "usage": micro.usage,
+                "research_summary": micro.research_summary,
+            },
+        }
+
+    def _append_llm_event(self, payload: dict) -> None:
+        path = self.memory_store.directory / "llm_events.jsonl"
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, sort_keys=True, default=str) + "\n")
 
     def construct_library(self) -> tuple[list[FactorArtifact], list[dict]]:
         """Build and save a research-only candidate library without opening holdout."""
@@ -254,6 +431,16 @@ class AdaptiveResearchController:
             None,
         )
         valid = sum(item.record.integrity_passed for item in self.outcomes)
+        informative = sum(
+            item.record.integrity_passed
+            and bool(item.record.fold_metrics)
+            and all(
+                fold.get("stock_day_observations", 0)
+                and fold.get("mean_ic") is not None
+                for fold in item.record.fold_metrics
+            )
+            for item in self.outcomes
+        )
         mechanisms = {item.mechanism for item in self.elite_archive.items.values()}
         stable = [
             item.record.fold_ic_sign_consistency
@@ -261,10 +448,31 @@ class AdaptiveResearchController:
             if item.record.fold_ic_sign_consistency is not None
         ]
         denominator = max(1, self.total_proposed)
+        first_parent = next(
+            (
+                index + 1
+                for index, item in enumerate(self.outcomes)
+                if item.tier in {"PARENT", "ELITE"}
+            ),
+            None,
+        )
+        coverage = self.macro.coverage_status(self.memory)
+        token_usage = sum(
+            int(section.get("usage", {}).get("total_tokens", 0) or 0)
+            for event in self.llm_events
+            for section in (event["macro"], event["micro"])
+        )
+        llm_calls = sum(
+            bool(section.get("response_id"))
+            for event in self.llm_events
+            for section in (event["macro"], event["micro"])
+        )
         return {
+            "arm": "adaptive_luna" if self.use_llm else "adaptive_deterministic",
             "candidates_tested": len(self.outcomes),
+            "candidates_to_first_parent": first_parent,
             "candidates_to_first_elite": first_elite,
-            "valid_information_per_10": 10.0 * valid / len(self.outcomes)
+            "valid_information_per_10": 10.0 * informative / len(self.outcomes)
             if self.outcomes
             else 0.0,
             "duplicate_formula_ratio": self.duplicate_count / denominator,
@@ -277,5 +485,23 @@ class AdaptiveResearchController:
             "elite_walk_forward_sign_stability": sum(stable) / len(stable)
             if stable
             else None,
+            "mechanisms_covered": list(coverage["covered"]),
+            "mechanism_coverage_count": len(coverage["covered"]),
+            "mechanism_test_counts": coverage["tested"],
+            "llm_calls": llm_calls,
+            "llm_total_tokens": token_usage,
+            "llm_raw_factor_proposals": self.llm_raw_proposals,
+            "llm_rejected_factor_proposals": self.llm_rejected_proposals,
+            "llm_invalid_proposal_ratio": (
+                self.llm_rejected_proposals / self.llm_raw_proposals
+                if self.llm_raw_proposals
+                else 0.0
+            ),
+            "llm_macro_fallbacks": sum(
+                self.use_llm
+                and event["macro"]["reason"] != "deterministic_controller"
+                and not event["macro"]["used_llm"]
+                for event in self.llm_events
+            ),
             "holdout_evaluated": False,
         }

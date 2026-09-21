@@ -49,3 +49,41 @@ should alter the gates or expose the 2016 holdout.
 No factors passed every promotion gate, so promoted-library diversity and final 2016 OOS
 performance are undefined at this stage. The empty library must not be made non-empty by
 relaxing gates after observing these results.
+
+## Adaptive Macro/Micro/Cross deterministic baseline
+
+The XALPHA-inspired adaptive controller was then run with a fixed budget of 60 evaluated
+candidates. The protocol required all eight mechanisms to be sampled before exploitation or
+STOP, used the same walk-forward evaluator for every candidate, and did not load 2016.
+
+| Metric | Adaptive deterministic v6 |
+| --- | ---: |
+| Candidates evaluated | 60 |
+| Candidates to first Parent | 3 |
+| Candidates to first Elite | Not reached |
+| Effective valid information per 10 | 9.6667 |
+| Duplicate-formula rate | 0.0% |
+| Invalid evaluated-proposal rate | 0.0% |
+| Mechanisms covered | 8 / 8 |
+| Parent pool size after its cap | 20 |
+| Elite archive size | 0 |
+
+The mandatory coverage phase evaluated exactly two candidates in each of the eight
+mechanisms, consuming 16 of the 60-candidate budget. The adaptive phase then allocated the
+remaining 44 candidates, producing final counts of 8 price-trend, 8 price-reversal,
+8 volatility, 8 price-volume, 6 fundamental-value, 4 fundamental-quality, 2 news-attention,
+and 16 cross-domain-regime tests. Thirty-one candidates reached the lenient Parent tier over
+the trajectory; the bounded pool retained 20. No candidate reached Elite because none
+simultaneously satisfied the pre-committed Newey-West significance, three-positive-fold,
+stressed-cost, and turnover gates. The gates were not relaxed after seeing this result.
+
+This run also verified three implementation corrections: reversal hypotheses using words
+such as “reverse” are aligned with negative return direction; fundamental changes use the
+first point-in-time appearance of a report rather than a future repeated row; and interaction
+direction is the product of both parent directions. All 60 candidates passed the integrity
+gate after these fixes. The complete local trajectory is under
+`artifacts/experiments/adaptive_comparisons/mechanism_coverage_v6/`.
+
+The equal-budget adaptive Luna arm is intentionally pending explicit authorization to send
+factor formulas, hypotheses, 2010-2015 aggregate research metrics, and structured research
+memory to the OpenAI API. Raw observations and the 2016 holdout will not be sent.

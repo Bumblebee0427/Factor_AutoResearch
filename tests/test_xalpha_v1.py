@@ -5,10 +5,16 @@ import pandas as pd
 import pytest
 
 from src.brains.macro import DeterministicMacroBrain
-from src.core.schemas import FactorArtifact, ResearchMemory
+from src.brains.micro import (
+    DeterministicMicroBrain,
+    adaptive_seed_candidates,
+    infer_mechanism,
+)
+from src.core.schemas import FactorArtifact, ResearchMemory, ResearchPlan
 from src.factors.primitives import future_return
 from src.factors.schema import FactorSpec
 from src.memory.store import ResearchMemoryStore
+from src.quality.alignment import check_alignment
 from src.quality.dynamic_leakage import check_dynamic_leakage
 from src.quality.static_checks import check_expression, check_factor_spec
 from src.research.controller import AdaptiveResearchController
@@ -99,6 +105,16 @@ def test_data_contract_rejects_future_return() -> None:
     assert any("future" in reason.lower() for reason in result.reasons)
 
 
+def test_reversal_hypothesis_aligns_with_negative_return_direction() -> None:
+    spec = make_spec(
+        "reversal",
+        hypothesis="Recent winners may reverse after temporary liquidity pressure dissipates.",
+        window=5,
+        direction=-1,
+    )
+    assert check_alignment(spec, "PRICE_REVERSAL").passed
+
+
 def test_truncation_test_catches_leaking_builder() -> None:
     panel = leakage_panel()
     spec = make_spec()
@@ -187,7 +203,11 @@ def test_library_prunes_correlation_and_zero_residual_ic() -> None:
 
 def test_macro_brain_supports_all_four_actions() -> None:
     macro = DeterministicMacroBrain(
-        {"minimum_evidence_before_stop": 10, "stop_rounds_without_improvement": 2}
+        {
+            "minimum_evidence_before_stop": 10,
+            "stop_rounds_without_improvement": 2,
+            "minimum_mechanisms_before_stop": 0,
+        }
     )
     empty = ResearchMemory()
     assert macro.plan(empty, {}, {}, 10).action == "PIVOT"
@@ -224,3 +244,89 @@ def test_macro_brain_supports_all_four_actions() -> None:
         == "IMPROVE"
     )
     assert macro.plan(empty, {}, {}, 0).action == "STOP"
+
+
+def test_adaptive_seeds_cover_every_mechanism() -> None:
+    counts = {
+        mechanism: 0
+        for mechanism in (
+            "PRICE_TREND",
+            "PRICE_REVERSAL",
+            "VOLATILITY",
+            "PRICE_VOLUME",
+            "FUNDAMENTAL_VALUE",
+            "FUNDAMENTAL_QUALITY",
+            "NEWS_ATTENTION",
+            "CROSS_DOMAIN_REGIME",
+        )
+    }
+    for spec in adaptive_seed_candidates():
+        counts[infer_mechanism(spec)] += 1
+    assert all(count >= 2 for count in counts.values())
+
+
+def test_macro_requires_mechanism_coverage_before_stop() -> None:
+    macro = DeterministicMacroBrain(
+        {
+            "minimum_evidence_before_stop": 1,
+            "stop_rounds_without_improvement": 1,
+            "minimum_mechanisms_before_stop": 8,
+            "min_candidates_per_mechanism": 2,
+        }
+    )
+    memory = ResearchMemory(
+        recent_experiments=[{"factor_id": "failed"}],
+        rounds_without_improvement=10,
+    )
+    plan = macro.plan(memory, {}, {}, 20)
+    assert plan.action == "PIVOT"
+    assert plan.mechanism == "PRICE_TREND"
+    assert plan.candidate_budget == 2
+
+
+def test_combine_preserves_both_parent_directions() -> None:
+    quality_spec = make_spec(
+        "quality",
+        family="fundamental",
+        hypothesis="Profitable firms may outperform.",
+        base_feature="after_tax_roe",
+        window=None,
+        cs_operator="winsorize_zscore",
+        direction=1,
+    )
+    low_vol_spec = make_spec(
+        "low_vol",
+        hypothesis="Low-volatility firms may earn defensive demand.",
+        base_feature="volatility",
+        window=20,
+        cs_operator="winsorize_zscore",
+        direction=-1,
+    )
+    parents = {
+        "quality": FactorArtifact(
+            quality_spec,
+            make_record("quality", family="fundamental"),
+            "FUNDAMENTAL_QUALITY",
+        ),
+        "low_vol": FactorArtifact(
+            low_vol_spec,
+            make_record("low_vol"),
+            "VOLATILITY",
+        ),
+    }
+    plan = ResearchPlan(
+        action="COMBINE",
+        theme="Complementary parent crossover",
+        mechanism="CROSS_DOMAIN_REGIME",
+        hypothesis_goal="Test whether quality conditions the low-volatility premium.",
+        parent_ids=("quality", "low_vol"),
+        reason="Test a complementary quality and defensive interaction.",
+        candidate_budget=2,
+    )
+
+    proposals = DeterministicMicroBrain().generate(
+        plan, parents, tested_formulas=set(), round_id=1
+    )
+
+    assert proposals
+    assert all(proposal.direction == -1 for proposal in proposals)

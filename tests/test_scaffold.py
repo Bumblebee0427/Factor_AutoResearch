@@ -7,6 +7,7 @@ from src.data.preprocess import split_research_holdout
 from src.evaluation.integrity import check_integrity
 from src.evaluation.validation import HoldoutGuard
 from src.factors.schema import FactorSpec
+from src.factors.primitives import fundamental_change
 from src.factors.transforms import cross_sectional_zscore
 from src.research.generator import seed_candidates
 
@@ -112,3 +113,22 @@ def test_cross_sectional_transform_uses_each_date_independently() -> None:
     transformed = cross_sectional_zscore(values, dates)
     assert transformed.iloc[0] == pytest.approx(transformed.iloc[2])
     assert transformed.iloc[1] == pytest.approx(transformed.iloc[3])
+
+
+def test_fundamental_change_uses_first_point_in_time_report_value() -> None:
+    values = pd.Series([100.0, 100.0, 999.0, 120.0, 120.0])
+    symbols = pd.Series(["AAA"] * 5)
+    periods = pd.Series(
+        pd.to_datetime(
+            [
+                "2014-12-31",
+                "2014-12-31",
+                "2014-12-31",
+                "2015-03-31",
+                "2015-03-31",
+            ]
+        )
+    )
+    changed = fundamental_change(values, symbols, periods)
+    assert changed.iloc[3] == pytest.approx(0.20)
+    assert changed.iloc[4] == pytest.approx(0.20)

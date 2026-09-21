@@ -205,6 +205,7 @@ class LLMFactorGenerator:
         recent_records: list[ExperimentRecord],
         parent_specs: dict[str, FactorSpec],
         parent_decisions: dict[str, str] | None = None,
+        research_plan: dict | None = None,
     ) -> dict:
         history_limit = int(self.config.get("max_history_records", 20))
         selected_records = sorted(
@@ -220,6 +221,7 @@ class LLMFactorGenerator:
         )[:history_limit]
         return {
             "generation_to_propose": generation,
+            "research_plan": research_plan,
             "research_state": {
                 "promoted_factor_ids": state.promoted_factor_ids[-20:],
                 "held_factor_ids": state.held_factor_ids[-20:],
@@ -274,6 +276,10 @@ class LLMFactorGenerator:
                 "holdout_year": "withheld; never reference or infer it",
                 "raw_data_available_to_llm": False,
                 "proposal_mix": "roughly 60-80% exploitation and 20-40% exploration",
+                "plan_binding": (
+                    "Every proposal must implement the supplied research_plan action, "
+                    "mechanism, parents, and candidate budget when a plan is present."
+                ),
                 "proposal_type_rules": {
                     "exploitation": "PROMOTE parent required",
                     "failure_repair": (
@@ -469,6 +475,7 @@ class LLMFactorGenerator:
         parent_specs: dict[str, FactorSpec],
         parent_decisions: dict[str, str] | None = None,
         tested_ids: set[str],
+        research_plan: dict | None = None,
     ) -> LLMGenerationResult:
         if not self.enabled:
             return LLMGenerationResult((), False, "llm_disabled")
@@ -485,6 +492,7 @@ class LLMFactorGenerator:
             recent_records=recent_records,
             parent_specs=parent_specs,
             parent_decisions=parent_decisions,
+            research_plan=research_plan,
         )
         try:
             response = self._get_client().responses.parse(

@@ -16,8 +16,18 @@ def mean_cross_sectional_correlation(
     frame = pd.DataFrame(
         {"date": dates, "candidate": candidate, "existing": existing}
     ).dropna()
+
+    def safe_spearman(day: pd.DataFrame) -> float:
+        if (
+            len(day) < 2
+            or day["candidate"].nunique() < 2
+            or day["existing"].nunique() < 2
+        ):
+            return np.nan
+        return float(day["candidate"].corr(day["existing"], method="spearman"))
+
     daily = frame.groupby("date").apply(
-        lambda day: day["candidate"].corr(day["existing"], method="spearman"),
+        safe_spearman,
         include_groups=False,
     )
     return float(daily.mean())

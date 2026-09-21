@@ -72,8 +72,11 @@ def fundamental_change(
     )
     reports = (
         frame.dropna(subset=["symbol", "period", "value"])
-        .drop_duplicates(["symbol", "period"], keep="last")
-        .sort_values(["symbol", "period"])
+        # The daily panel repeats each report after it becomes available. The
+        # first occurrence is point-in-time; the last occurrence is in the future.
+        .drop_duplicates(["symbol", "period"], keep="first").sort_values(
+            ["symbol", "period"]
+        )
     )
     reports["change"] = reports.groupby("symbol", sort=False)["value"].pct_change(
         fill_method=None

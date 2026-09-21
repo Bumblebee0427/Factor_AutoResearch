@@ -30,6 +30,11 @@ def parse_args() -> argparse.Namespace:
     )
     mode.add_argument("--execute", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument(
+        "--llm",
+        action="store_true",
+        help="Use Luna for post-coverage Macro and Micro decisions.",
+    )
+    parser.add_argument(
         "--freeze",
         action="store_true",
         help="Freeze a pruned final library after research.",
@@ -55,6 +60,8 @@ def main() -> None:
     config["paths"]["experiment_dir"] = str(
         PROJECT_ROOT / config["paths"]["experiment_dir"]
     )
+    config["llm"]["enabled"] = bool(args.llm)
+    config["llm"]["required"] = bool(args.llm)
     if args.dry_run:
         settings = config.get("adaptive_research", {})
         print(
@@ -73,7 +80,9 @@ def main() -> None:
             )
         )
         return
-    controller = AdaptiveResearchController(config, load_research_panel(config))
+    controller = AdaptiveResearchController(
+        config, load_research_panel(config), use_llm=args.llm
+    )
     controller.run()
     summary = controller.summary()
     if args.freeze:

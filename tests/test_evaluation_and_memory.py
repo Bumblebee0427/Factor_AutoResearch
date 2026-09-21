@@ -4,8 +4,9 @@ import numpy as np
 import pandas as pd
 
 from src.evaluation.evaluator import evaluate_walk_forward
-from src.evaluation.ic import newey_west_tstat, summarize_ic
+from src.evaluation.ic import daily_rank_ic, newey_west_tstat, summarize_ic
 from src.evaluation.validation import WalkForwardFold
+from src.evaluation.portfolio import evaluate_portfolio
 from src.research.failures import classify_failure_reasons
 from src.research.memory import ResearchState, update_state
 from src.utils.logging import ExperimentRecord
@@ -59,6 +60,20 @@ def test_empty_ic_sample_returns_nan_summary() -> None:
     assert np.isnan(summary.mean_ic)
     assert np.isnan(summary.ic_tstat)
     assert summary.observations == 0
+
+
+def test_daily_ic_treats_constant_cross_section_as_undefined() -> None:
+    frame = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2015-01-02"] * 3),
+            "factor": [1.0, 1.0, 1.0],
+            "future_return": [0.01, 0.02, 0.03],
+        }
+    )
+
+    result = daily_rank_ic(frame)
+
+    assert result.isna().all()
 
 
 def test_walk_forward_reports_multi_horizon_ic() -> None:
@@ -119,3 +134,23 @@ def test_failure_taxonomy_and_family_state_are_structured() -> None:
     assert family["decision_counts"]["HOLD"] == 1
     assert family["mean_rank_ic"] == 0.01
     assert family["failure_counts"]["excessive_turnover"] == 1
+
+
+def test_portfolio_handles_single_name_cross_sections() -> None:
+    sample = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2015-01-02", "2015-01-05"]),
+            "symbol": ["AAA", "AAA"],
+            "factor": [1.0, 2.0],
+            "portfolio_return": [0.01, -0.01],
+        }
+    )
+    result = evaluate_portfolio(
+        sample,
+        quantile=0.2,
+        quantile_count=5,
+        cost_bps=10,
+        high_cost_bps=25,
+        annualization=252,
+    )
+    assert np.isnan(result.quantile_monotonicity)

@@ -69,6 +69,7 @@ scripts/
 ├── run_loop.py            # Original fixed-generation baseline on 2010-2015 only
 ├── run_research.py        # Budget-driven Macro/Micro/Cross V1 entrypoint
 ├── compare_search.py       # Isolated deterministic/LLM research arms and reports
+├── compare_adaptive.py     # Equal-budget adaptive deterministic/Luna comparison
 └── final_holdout.py       # One-shot evaluation of a frozen library on 2016
 ```
 
@@ -137,6 +138,8 @@ python scripts/final_holdout.py             # exactly once after freeze
 python scripts/test_llm_connection.py       # one minimal structured Luna request
 python scripts/compare_search.py --arm deterministic
 python scripts/compare_search.py --arm llm
+python scripts/compare_adaptive.py --arm deterministic --budget 60
+python scripts/compare_adaptive.py --arm both --budget 60
 
 pytest -q
 ```
@@ -193,6 +196,20 @@ lenient parent pool supports exploration, while the stricter elite archive is pe
 Neither archive automatically becomes the final library: freezing performs another pass for
 canonical-formula duplicates, cross-sectional correlation, residual IC, simplicity, and
 mechanism diversity.
+
+Before either arm may exploit a parent or stop, it must cover all eight mechanism families
+with at least two evaluated candidates per family. This coverage phase is deterministic and
+identical in the deterministic and Luna arms, so the LLM comparison starts from the same
+minimum evidence base. After coverage, Luna may propose the cycle-level action and bounded
+factor recipes. Every plan and recipe is revalidated locally, invalid output is logged, and
+unused budget is filled deterministically. The 60-candidate comparison reports time to first
+Parent/Elite, effective information yield, duplicate and invalid rates, archive diversity,
+and fold-sign stability rather than selecting on final Sharpe alone.
+
+The LLM receives factor formulas, hypotheses, 2010-2015 aggregate research metrics, eligible
+parent summaries, failure taxonomy, and structured research memory. It does not receive raw
+market rows or any 2016 data. Set `store: false` in `config.yaml` to keep API-side response
+storage disabled.
 
 This is deliberately not a full reproduction of XALPHA. V1 does not ingest papers at run
 time, implement the complete archetype taxonomy, generate arbitrary executable code, or use

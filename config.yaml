@@ -72,10 +72,12 @@ search:
 # XALPHA-inspired V1 controller. These thresholds are research-only and must
 # never be changed after inspecting the 2016 final holdout.
 adaptive_research:
-  max_rounds: 8
+  max_rounds: 24
   max_candidate_evaluations: 60
   stop_rounds_without_improvement: 2
-  minimum_evidence_before_stop: 10
+  minimum_evidence_before_stop: 60
+  minimum_mechanisms_before_stop: 8
+  min_candidates_per_mechanism: 2
   pivot_failure_threshold: 3
   combine_max_parent_correlation: 0.50
   parent_pool_size: 20

@@ -25,8 +25,19 @@ def daily_rank_ic(
 ) -> pd.Series:
     if frame.empty:
         return pd.Series(dtype=float, name="rank_ic")
+
+    def safe_spearman(day: pd.DataFrame) -> float:
+        pair = day[["factor", target_column]].dropna()
+        if (
+            len(pair) < 2
+            or pair["factor"].nunique() < 2
+            or pair[target_column].nunique() < 2
+        ):
+            return np.nan
+        return float(pair["factor"].corr(pair[target_column], method="spearman"))
+
     result = frame.groupby("date", sort=True).apply(
-        lambda day: day["factor"].corr(day[target_column], method="spearman"),
+        safe_spearman,
         include_groups=False,
     )
     if isinstance(result, pd.DataFrame):

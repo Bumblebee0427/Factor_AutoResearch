@@ -15,15 +15,13 @@ class AlignmentResult:
 
 def check_alignment(spec: FactorSpec, mechanism: str) -> AlignmentResult:
     hypothesis = spec.hypothesis.lower()
+    mentions_reversal = "revers" in hypothesis
     reasons: list[str] = []
-    if (
-        "reversal" in hypothesis
-        and spec.base_feature == "return"
-        and spec.direction > 0
-    ):
+    if mentions_reversal and spec.base_feature == "return" and spec.direction > 0:
         reasons.append("Reversal hypothesis requires a negative return direction.")
     if (
-        any(word in hypothesis for word in ("momentum", "continuation", "winner"))
+        not mentions_reversal
+        and any(word in hypothesis for word in ("momentum", "continuation", "winner"))
         and spec.base_feature == "return"
         and spec.direction < 0
     ):
