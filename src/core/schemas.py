@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from src.factors.expression import Op
 from src.factors.schema import ALLOWED_BASE_FEATURES, FactorSpec
 from src.utils.logging import ExperimentRecord
 
@@ -28,15 +29,14 @@ class DataContract:
     news_fields: frozenset[str]
     allowed_transforms: frozenset[str]
     unavailable_fields: frozenset[str]
+    group_fields: dict[str, str] = field(default_factory=dict)
 
     @property
     def available_features(self) -> frozenset[str]:
         return self.price_fields | self.fundamental_fields | self.news_fields
 
     def supports(self, spec: FactorSpec) -> tuple[bool, tuple[str, ...]]:
-        referenced = {spec.base_feature}
-        if spec.interaction_feature:
-            referenced.add(spec.interaction_feature)
+        referenced = set(spec.required_features)
         unavailable = referenced & self.unavailable_fields
         unknown = referenced - self.available_features
         reasons = []
@@ -44,16 +44,36 @@ class DataContract:
             reasons.append(f"Unavailable fields requested: {sorted(unavailable)}")
         if unknown:
             reasons.append(f"Fields outside DataContract: {sorted(unknown)}")
-        transforms = {spec.ts_operator, spec.cs_operator} - {None, "identity"}
+        transforms = set(spec.effective_expression.operator_counts())
+        transforms |= {spec.ts_operator, spec.cs_operator} - {None, "identity"}
         unsupported = transforms - self.allowed_transforms
         if unsupported:
             reasons.append(f"Unsupported transforms: {sorted(unsupported)}")
+        if (
+            "group_rank" in transforms
+            or "group_zscore" in transforms
+            or "group_neutralize" in transforms
+        ):
+            groups = _expression_groups(spec.effective_expression)
+            unknown_groups = groups - set(self.group_fields)
+            if unknown_groups:
+                reasons.append(f"Unsupported groups: {sorted(unknown_groups)}")
         return not reasons, tuple(reasons)
 
     @classmethod
     def antelion(cls) -> "DataContract":
         available = set(ALLOWED_BASE_FEATURES)
-        price = {"return", "volatility", "volume_shock", "distance_to_high"}
+        price = {
+            "return",
+            "volatility",
+            "volume_shock",
+            "distance_to_high",
+            "raw_open",
+            "raw_high",
+            "raw_low",
+            "raw_close",
+            "raw_volume",
+        }
         fundamentals = {
             "after_tax_roe",
             "operating_margin",
@@ -69,13 +89,38 @@ class DataContract:
             news_fields=frozenset(news),
             allowed_transforms=frozenset(
                 {
+                    "add",
+                    "sub",
+                    "mul",
+                    "safe_div",
+                    "neg",
+                    "abs",
+                    "clip",
+                    "sign",
+                    "lag",
+                    "delta",
+                    "rolling_sum",
                     "rolling_mean",
+                    "rolling_std",
+                    "rolling_min",
+                    "rolling_max",
+                    "ts_rank",
+                    "ts_zscore",
+                    "ewma",
+                    "decay_linear",
+                    "rolling_corr",
+                    "rolling_cov",
+                    "cs_rank",
+                    "cs_zscore",
                     "vol_adjust",
                     "rank",
                     "zscore",
                     "winsorize",
                     "winsorize_zscore",
                     "sign",
+                    "group_rank",
+                    "group_zscore",
+                    "group_neutralize",
                 }
             ),
             unavailable_fields=frozenset(
@@ -87,7 +132,23 @@ class DataContract:
                     "future_return",
                 }
             ),
+            group_fields={
+                "sector": "gics_sector",
+                "subindustry": "gics_sub_industry",
+            },
         )
+
+
+def _expression_groups(expression) -> set[str]:
+    groups: set[str] = set()
+    if isinstance(expression, Op):
+        if expression.name in {"group_rank", "group_zscore", "group_neutralize"}:
+            group = expression.params.get("group")
+            if group is not None:
+                groups.add(str(group))
+        for child in expression.args:
+            groups.update(_expression_groups(child))
+    return groups
 
 
 @dataclass(frozen=True)

@@ -63,6 +63,18 @@ evaluation:
   high_cost_bps: 25.0
   annualization_days: 252
 
+dsl:
+  enabled: true
+  allowed_feature_windows: [1, 5, 10, 20, 60]
+  max_ast_depth: 5
+  max_operator_nodes: 6
+  max_rolling_nodes: 3
+  max_binary_nodes: 2
+  max_group_nodes: 2
+  min_group_size: 5
+  safe_div_epsilon: 1.0e-12
+  allowed_groups: [sector, subindustry]
+
 search:
   generations: 4
   max_candidates: 200

@@ -41,6 +41,11 @@ class ExperimentRecord:
     targeted_failure: str | None = None
     expected_metric_effect: str | None = None
     falsification_condition: str | None = None
+    expression_hash: str | None = None
+    ast_depth: int | None = None
+    operator_count: int | None = None
+    rolling_operator_count: int | None = None
+    group_operator_count: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -74,6 +79,11 @@ class ExperimentStore:
             "decision": record.decision,
             "failure_codes": "|".join(record.failure_codes),
             "reasons": "|".join(record.reasons),
+            "expression_hash": record.expression_hash,
+            "ast_depth": record.ast_depth,
+            "operator_count": record.operator_count,
+            "rolling_operator_count": record.rolling_operator_count,
+            "group_operator_count": record.group_operator_count,
         }
         exists = self.csv_path.exists()
         with self.csv_path.open("a", newline="", encoding="utf-8") as handle:

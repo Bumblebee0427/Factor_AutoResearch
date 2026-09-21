@@ -215,7 +215,10 @@ class AdaptiveResearchController:
                 mechanism = infer_mechanism(spec)
                 reasons: list[str] = []
                 static = check_factor_spec(
-                    spec, self.contract, int(self.config["gates"]["max_complexity"])
+                    spec,
+                    self.contract,
+                    int(self.config["gates"]["max_complexity"]),
+                    self.config.get("dsl", {}),
                 )
                 reasons.extend(static.reasons)
                 alignment = check_alignment(spec, mechanism)

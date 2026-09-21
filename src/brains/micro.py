@@ -13,8 +13,24 @@ from src.utils.logging import ExperimentRecord
 
 
 def infer_mechanism(spec: FactorSpec) -> str:
+    if spec.mechanism:
+        return spec.mechanism
     if spec.interaction_feature:
         return "CROSS_DOMAIN_REGIME"
+    if spec.expression is not None:
+        features = spec.required_features
+        if "news_volume" in features:
+            return "NEWS_ATTENTION"
+        if "volatility" in features:
+            return "VOLATILITY"
+        if features & {"volume_shock", "distance_to_high", "raw_volume"}:
+            return "PRICE_VOLUME"
+        if features & {"earnings_yield", "asset_growth"}:
+            return "FUNDAMENTAL_VALUE"
+        if features & {"after_tax_roe", "operating_margin", "profit_margin"}:
+            return "FUNDAMENTAL_QUALITY"
+        if "return" in features:
+            return "PRICE_REVERSAL" if spec.direction < 0 else "PRICE_TREND"
     if spec.base_feature == "return":
         return "PRICE_REVERSAL" if spec.direction < 0 else "PRICE_TREND"
     if spec.base_feature == "volatility":

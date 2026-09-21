@@ -7,6 +7,8 @@ import pandas as pd
 
 import src.factors.primitives as primitives
 import src.factors.transforms as transforms
+from src.factors.expression import Constant, Feature, Op, Expr
+from src.factors.operator_registry import OPERATOR_REGISTRY
 from src.factors.schema import FactorSpec
 
 
@@ -33,6 +35,16 @@ class FactorBuilder:
             return primitives.distance_to_high(close, symbols, int(window))
         if name == "news_volume":
             return primitives.rolling_sum(panel["news_count"], symbols, int(window))
+        if name == "raw_open":
+            return panel["open"].astype(float)
+        if name == "raw_high":
+            return panel["high"].astype(float)
+        if name == "raw_low":
+            return panel["low"].astype(float)
+        if name == "raw_close":
+            return panel["close"].astype(float)
+        if name == "raw_volume":
+            return panel["volume"].astype(float)
         if name == "earnings_yield":
             return panel["earnings_per_share"].div(close.replace(0.0, np.nan))
         if name == "asset_growth":
@@ -43,32 +55,28 @@ class FactorBuilder:
             return panel[name].astype(float)
         raise ValueError(f"No builder registered for primitive: {name}")
 
-    def build(self, panel: pd.DataFrame, spec: FactorSpec) -> pd.Series:
-        values = self.primitive(panel, spec.base_feature, spec.window).astype(float)
-        if spec.ts_operator == "rolling_mean":
-            values = primitives.rolling_mean(values, panel["symbol"], int(spec.window))
-        elif spec.ts_operator == "vol_adjust":
-            volatility = primitives.rolling_volatility(
-                panel["close"], panel["symbol"], int(spec.window)
-            ).replace(0.0, np.nan)
-            values = values.div(volatility)
-
-        if spec.interaction_feature:
-            interaction = self.primitive(
-                panel,
-                spec.interaction_feature,
-                spec.interaction_window,
+    def evaluate_expr(self, panel: pd.DataFrame, expression: Expr) -> pd.Series:
+        if isinstance(expression, Feature):
+            return self.primitive(panel, expression.name, expression.window).astype(
+                float
             )
-            values = values.mul(interaction)
+        if isinstance(expression, Constant):
+            return pd.Series(float(expression.value), index=panel.index, dtype=float)
+        if not isinstance(expression, Op):
+            raise TypeError(f"Unsupported expression node: {type(expression)!r}")
+        operator = OPERATOR_REGISTRY.get(expression.name)
+        if operator is None:
+            raise ValueError(f"Unregistered DSL operator: {expression.name}")
+        args = tuple(self.evaluate_expr(panel, child) for child in expression.args)
+        if isinstance(operator.arity, int) and len(args) != operator.arity:
+            raise ValueError(
+                f"Operator {expression.name} expects {operator.arity} args, got {len(args)}."
+            )
+        values = operator.implementation(panel, args, expression.params)
+        return values.astype(float)
 
-        if spec.cs_operator == "rank":
-            values = transforms.cross_sectional_rank(values, panel["date"])
-        elif spec.cs_operator == "zscore":
-            values = transforms.cross_sectional_zscore(values, panel["date"])
-        elif spec.cs_operator == "winsorize":
-            values = transforms.winsorize(values, panel["date"])
-        elif spec.cs_operator == "winsorize_zscore":
-            values = transforms.winsorize_zscore(values, panel["date"])
-        elif spec.cs_operator == "sign":
-            values = np.sign(values)
-        return values.mul(spec.direction).rename(spec.factor_id)
+    def build(self, panel: pd.DataFrame, spec: FactorSpec) -> pd.Series:
+        """Execute both V1 and V2 specs through the authoritative AST path."""
+        return self.evaluate_expr(panel, spec.effective_expression).rename(
+            spec.factor_id
+        )

@@ -10,7 +10,7 @@ structured outcomes. This repository maps those roles as follows:
 | Paper role | Repository implementation |
 | --- | --- |
 | Constrained hypothesis generator | `src/research/generator.py`, `src/research/llm_generator.py`, `src/research/mutator.py` |
-| Symbolic factor grammar | `src/factors/schema.py` |
+| Symbolic factor grammar | `src/factors/expression.py`, `src/factors/schema.py`, `src/factors/operator_registry.py` |
 | Deterministic execution | `src/factors/builder.py` |
 | Unified evaluator | `src/evaluation/evaluator.py` |
 | Transparent gatekeeper | `src/research/selector.py` |
@@ -66,6 +66,12 @@ rejects unknown parents, invalid windows, excessive complexity, duplicate IDs/fo
 malformed interactions. Only accepted `FactorSpec` objects reach the same deterministic
 builder and evaluator used by every non-LLM candidate.
 API failures are append-only audit events and trigger the deterministic exploration fallback.
+
+The V2 DSL makes this boundary explicit: every accepted expression is an immutable typed AST,
+serialized canonically and evaluated through the authoritative operator registry. Legacy flat
+`FactorSpec` recipes are migrated into the same AST before execution, so old and new candidates
+share one builder path. Static validation checks operator arity, parameter ranges, feature and
+group whitelists, history requirements, depth, and operator-family budgets before panel evaluation.
 
 The OpenAI adapter uses the Responses API with GPT-5.6 Luna, standard mode, low reasoning,
 low verbosity, structured Pydantic output, no tools, and remote response storage disabled.

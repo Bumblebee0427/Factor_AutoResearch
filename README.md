@@ -29,10 +29,12 @@ src/
 │   ├── quality.py         # Key, overlap, year, and availability invariants
 │   └── preprocess.py      # Universe filters and physical research/holdout split
 ├── factors/
-│   ├── schema.py          # Typed FactorSpec grammar and canonical formulas
+│   ├── expression.py      # Immutable V2 AST, canonicalization, hashes, and static validation
+│   ├── operator_registry.py # Authoritative DSL operator catalog and implementations
+│   ├── schema.py          # FactorSpec grammar plus legacy-to-AST migration
 │   ├── primitives.py      # Historical price, volume, volatility, and news primitives
-│   ├── transforms.py      # Date-local rank, z-score, and winsorization
-│   └── builder.py         # Deterministic FactorSpec execution; no generated Python
+│   ├── transforms.py      # Date-local and group-local cross-sectional transforms
+│   └── builder.py         # Deterministic AST/FactorSpec execution; no generated Python
 ├── evaluation/
 │   ├── integrity.py       # Leakage, availability, complexity, and coverage gates
 │   ├── ic.py              # Daily rank IC, ICIR, hit rate, and t-statistic
@@ -75,6 +77,8 @@ scripts/
 
 See [docs/architecture.md](docs/architecture.md) for the mapping from the paper to this
 repository and the decisions that intentionally differ from the paper.
+See [docs/dsl_v2.md](docs/dsl_v2.md) for the typed expression DSL, operator catalog, validation
+limits, and LLM proposal schema.
 
 ## Data integration
 

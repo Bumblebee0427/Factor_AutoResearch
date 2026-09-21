@@ -70,6 +70,7 @@ class ResearchLoop:
     def _retired_integrity_record(
         self, spec: FactorSpec, reasons: list[str]
     ) -> ExperimentRecord:
+        ast_metadata = _expression_metadata(spec)
         failure_codes = classify_failure_reasons(reasons, integrity_passed=False)
         return ExperimentRecord(
             factor_id=spec.factor_id,
@@ -99,6 +100,7 @@ class ResearchLoop:
             targeted_failure=spec.targeted_failure,
             expected_metric_effect=spec.expected_metric_effect,
             falsification_condition=spec.falsification_condition,
+            **ast_metadata,
         )
 
     def evaluate_candidate(
@@ -157,6 +159,7 @@ class ResearchLoop:
         )
         payload = metrics.to_dict()
         failure_codes = classify_failure_reasons(gate.reasons, integrity_passed=True)
+        ast_metadata = _expression_metadata(spec)
         record = ExperimentRecord(
             factor_id=spec.factor_id,
             generation=spec.generation,
@@ -188,8 +191,10 @@ class ResearchLoop:
             targeted_failure=spec.targeted_failure,
             expected_metric_effect=spec.expected_metric_effect,
             falsification_condition=spec.falsification_condition,
+            **ast_metadata,
         )
         return record, signal
+
 
     def run(
         self, initial_candidates: list[FactorSpec] | None = None
@@ -352,3 +357,35 @@ class ResearchLoop:
         )
         self.holdout.freeze()
         return manifest
+
+
+def _expression_metadata(spec: FactorSpec) -> dict[str, object]:
+    expression = spec.effective_expression
+    counts = expression.operator_counts()
+    return {
+        "expression_hash": spec.expression_hash,
+        "ast_depth": expression.depth(),
+        "operator_count": sum(counts.values()),
+        "rolling_operator_count": sum(
+            count
+            for name, count in counts.items()
+            if name
+            in {
+                "rolling_sum",
+                "rolling_mean",
+                "rolling_std",
+                "rolling_min",
+                "rolling_max",
+                "ts_rank",
+                "ts_zscore",
+                "decay_linear",
+                "rolling_corr",
+                "rolling_cov",
+            }
+        ),
+        "group_operator_count": sum(
+            count
+            for name, count in counts.items()
+            if name in {"group_rank", "group_zscore", "group_neutralize"}
+        ),
+    }

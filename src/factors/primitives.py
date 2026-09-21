@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pandas as pd
+import numpy as np
 
 
 def trailing_return(close: pd.Series, symbols: pd.Series, window: int) -> pd.Series:
@@ -59,6 +60,118 @@ def rolling_mean(values: pd.Series, symbols: pd.Series, window: int) -> pd.Serie
         .mean()
         .reset_index(level=0, drop=True)
     )
+
+
+def rolling_sum_strict(values: pd.Series, symbols: pd.Series, window: int) -> pd.Series:
+    return (
+        values.groupby(symbols, sort=False)
+        .rolling(window, min_periods=window)
+        .sum()
+        .reset_index(level=0, drop=True)
+        .reindex(values.index)
+    )
+
+
+def rolling_std(values: pd.Series, symbols: pd.Series, window: int) -> pd.Series:
+    return (
+        values.groupby(symbols, sort=False)
+        .rolling(window, min_periods=window)
+        .std()
+        .reset_index(level=0, drop=True)
+        .reindex(values.index)
+    )
+
+
+def rolling_min(values: pd.Series, symbols: pd.Series, window: int) -> pd.Series:
+    return (
+        values.groupby(symbols, sort=False)
+        .rolling(window, min_periods=window)
+        .min()
+        .reset_index(level=0, drop=True)
+        .reindex(values.index)
+    )
+
+
+def rolling_max(values: pd.Series, symbols: pd.Series, window: int) -> pd.Series:
+    return (
+        values.groupby(symbols, sort=False)
+        .rolling(window, min_periods=window)
+        .max()
+        .reset_index(level=0, drop=True)
+        .reindex(values.index)
+    )
+
+
+def ts_rank(values: pd.Series, symbols: pd.Series, window: int) -> pd.Series:
+    """Rank each observation against its own trailing ticker history in [0, 1]."""
+    result = (
+        values.groupby(symbols, sort=False)
+        .rolling(window, min_periods=window)
+        .apply(lambda sample: sample.rank(method="average", pct=True).iloc[-1])
+        .reset_index(level=0, drop=True)
+    )
+    return result.reindex(values.index)
+
+
+def ts_zscore(values: pd.Series, symbols: pd.Series, window: int) -> pd.Series:
+    mean = rolling_mean(values, symbols, window)
+    std = rolling_std(values, symbols, window).replace(0.0, np.nan)
+    return values.sub(mean).div(std)
+
+
+def ewma(values: pd.Series, symbols: pd.Series, halflife: float) -> pd.Series:
+    result = values.groupby(symbols, sort=False, group_keys=False).apply(
+        lambda series: series.ewm(halflife=halflife, adjust=False, min_periods=1).mean()
+    )
+    return result.reindex(values.index)
+
+
+def decay_linear(values: pd.Series, symbols: pd.Series, window: int) -> pd.Series:
+    weights = np.arange(1.0, float(window) + 1.0)
+    weights /= weights.sum()
+    result = (
+        values.groupby(symbols, sort=False)
+        .rolling(window, min_periods=window)
+        .apply(lambda sample: float(np.dot(sample.to_numpy(), weights)), raw=False)
+        .reset_index(level=0, drop=True)
+    )
+    return result.reindex(values.index)
+
+
+def rolling_corr(
+    left: pd.Series,
+    right: pd.Series,
+    symbols: pd.Series,
+    window: int,
+) -> pd.Series:
+    result = pd.Series(np.nan, index=left.index, dtype=float)
+    frame = pd.DataFrame({"left": left, "right": right, "symbol": symbols})
+    for _, group in frame.groupby("symbol", sort=False):
+        result.loc[group.index] = (
+            group["left"]
+            .rolling(window, min_periods=window)
+            .corr(group["right"])
+            .to_numpy()
+        )
+    return result
+
+
+def rolling_cov(
+    left: pd.Series,
+    right: pd.Series,
+    symbols: pd.Series,
+    window: int,
+) -> pd.Series:
+    result = pd.Series(np.nan, index=left.index, dtype=float)
+    frame = pd.DataFrame({"left": left, "right": right, "symbol": symbols})
+    for _, group in frame.groupby("symbol", sort=False):
+        result.loc[group.index] = (
+            group["left"]
+            .rolling(window, min_periods=window)
+            .cov(group["right"])
+            .to_numpy()
+        )
+    return result
 
 
 def fundamental_change(

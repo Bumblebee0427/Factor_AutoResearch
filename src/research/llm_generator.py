@@ -10,6 +10,8 @@ from typing import Literal, Union
 
 from pydantic import BaseModel
 
+from src.factors.expression import Expr, expr_from_dict, validate_expression
+from src.factors.operator_registry import operator_catalog
 from src.factors.schema import FactorSpec
 from src.research.memory import ResearchState
 from src.utils.logging import ExperimentRecord
@@ -26,6 +28,11 @@ FeatureName = Literal[
     "earnings_yield",
     "asset_growth",
     "news_volume",
+    "raw_open",
+    "raw_high",
+    "raw_low",
+    "raw_close",
+    "raw_volume",
 ]
 TimeSeriesOperator = Literal["identity", "rolling_mean", "vol_adjust"]
 CrossSectionalOperator = Literal[
@@ -80,7 +87,53 @@ class InteractionFactorProposal(ProposalEvidence):
     interaction_window: int | None
 
 
-FactorProposal = Union[SingleFactorProposal, InteractionFactorProposal]
+class ExpressionFeatureProposal(BaseModel):
+    kind: Literal["feature"]
+    name: FeatureName
+    window: int | None = None
+
+    class Config:
+        extra = "forbid"
+
+
+class ExpressionConstantProposal(BaseModel):
+    kind: Literal["constant"]
+    value: float
+
+    class Config:
+        extra = "forbid"
+
+
+class ExpressionOpProposal(BaseModel):
+    kind: Literal["op"]
+    name: str
+    args: list["ExpressionNode"]
+    params: dict[str, object] = {}
+
+    class Config:
+        extra = "forbid"
+
+
+ExpressionNode = Union[
+    ExpressionFeatureProposal,
+    ExpressionConstantProposal,
+    ExpressionOpProposal,
+]
+ExpressionOpProposal.update_forward_refs()
+
+
+class ExpressionFactorProposal(ProposalEvidence):
+    recipe_kind: Literal["expression"]
+    family: Literal["price", "fundamental", "news", "interaction"]
+    mechanism: str
+    expression: ExpressionNode
+
+
+FactorProposal = Union[
+    SingleFactorProposal,
+    InteractionFactorProposal,
+    ExpressionFactorProposal,
+]
 
 
 class FactorProposalBatch(BaseModel):
@@ -124,7 +177,10 @@ parent-free exploration; do not emit exploitation proposals.
 The recipe schema is a strict union. Choose recipe_kind="single" for price, fundamental,
 or news proposals; that object has no interaction fields. Choose recipe_kind="interaction"
 only for an interaction-family recipe; that object requires interaction_feature. Fundamental
-features never have a window; windowed price/news features require one allowed window.
+features never have a primitive window; windowed price/news features require one allowed
+window. For recipe_kind="expression", emit a typed AST using kind=feature/constant/op and
+the registry catalog; do not emit a free-form expression string. A transform window belongs
+in operator params and is distinct from a Feature window.
 
 Every proposal must have a unique snake_case ID, an ex-ante economic mechanism, evidence
 for the change, an expected metric effect, and a falsification condition. Do not reverse a
@@ -267,6 +323,8 @@ class LLMFactorGenerator:
                 "allowed_windows": self.config.get(
                     "allowed_windows", [1, 5, 10, 20, 60]
                 ),
+                "operators": operator_catalog(),
+                "group_fields": ["sector", "subindustry"],
                 "max_complexity": int(self.config.get("max_complexity", 4)),
                 "max_proposals": int(
                     self.config.get("max_proposals_per_generation", 6)
@@ -344,6 +402,7 @@ class LLMFactorGenerator:
 
         for proposal in batch.proposals[:max_total]:
             reason_prefix = proposal.factor_id or "unnamed"
+            is_expression = isinstance(proposal, ExpressionFactorProposal)
             is_interaction = isinstance(proposal, InteractionFactorProposal)
             interaction_feature = (
                 proposal.interaction_feature if is_interaction else None
@@ -394,26 +453,32 @@ class LLMFactorGenerator:
                     f"{reason_prefix}: failure repair must name a targeted failure"
                 )
                 continue
-            if (
-                proposal.base_feature in windowed
-                and proposal.window not in allowed_windows
-            ):
-                rejected.append(f"{reason_prefix}: unsupported base window")
-                continue
-            if proposal.base_feature not in windowed and proposal.window is not None:
-                rejected.append(
-                    f"{reason_prefix}: fundamental base cannot have a window"
-                )
-                continue
-            if interaction_feature in windowed:
-                if interaction_window not in allowed_windows:
-                    rejected.append(f"{reason_prefix}: unsupported interaction window")
+            if not is_expression:
+                if (
+                    proposal.base_feature in windowed
+                    and proposal.window not in allowed_windows
+                ):
+                    rejected.append(f"{reason_prefix}: unsupported base window")
                     continue
-            elif interaction_feature is not None and interaction_window is not None:
-                rejected.append(
-                    f"{reason_prefix}: fundamental interaction cannot have a window"
-                )
-                continue
+                if (
+                    proposal.base_feature not in windowed
+                    and proposal.window is not None
+                ):
+                    rejected.append(
+                        f"{reason_prefix}: fundamental base cannot have a window"
+                    )
+                    continue
+                if interaction_feature in windowed:
+                    if interaction_window not in allowed_windows:
+                        rejected.append(
+                            f"{reason_prefix}: unsupported interaction window"
+                        )
+                        continue
+                elif interaction_feature is not None and interaction_window is not None:
+                    rejected.append(
+                        f"{reason_prefix}: fundamental interaction cannot have a window"
+                    )
+                    continue
             if proposal.parent_ids:
                 if any(
                     parent_counts.get(parent, 0) >= max_per_parent
@@ -425,31 +490,69 @@ class LLMFactorGenerator:
                     continue
 
             try:
-                spec = FactorSpec(
-                    factor_id=proposal.factor_id,
-                    generation=generation,
-                    parent_ids=tuple(proposal.parent_ids),
-                    family=proposal.family,
-                    hypothesis=proposal.hypothesis,
-                    base_feature=proposal.base_feature,
-                    ts_operator=proposal.ts_operator,
-                    window=proposal.window,
-                    cs_operator=proposal.cs_operator,
-                    interaction_feature=interaction_feature,
-                    interaction_window=interaction_window,
-                    direction=proposal.direction,
-                    mutation_reason=proposal.mutation_reason,
-                    demonstration_only=False,
-                    proposal_type=proposal.proposal_type,
-                    evidence_factor_ids=tuple(proposal.evidence_factor_ids),
-                    targeted_failure=(
-                        None
-                        if proposal.targeted_failure == "none"
-                        else proposal.targeted_failure
-                    ),
-                    expected_metric_effect=proposal.expected_metric_effect,
-                    falsification_condition=proposal.falsification_condition,
-                )
+                if is_expression:
+                    expression_payload = proposal.expression.dict()
+                    expression = expr_from_dict(expression_payload)
+                    expression_check = validate_expression(
+                        expression,
+                        allowed_features=set(FeatureName.__args__),
+                        allowed_windows=allowed_windows,
+                        allowed_groups={"sector", "subindustry"},
+                        max_operator_nodes=max_complexity + 2,
+                    )
+                    if not expression_check.passed:
+                        rejected.extend(
+                            f"{reason_prefix}: {reason}"
+                            for reason in expression_check.reasons
+                        )
+                        continue
+                    spec = FactorSpec(
+                        factor_id=proposal.factor_id,
+                        generation=generation,
+                        parent_ids=tuple(proposal.parent_ids),
+                        family=proposal.family,
+                        mechanism=proposal.mechanism,
+                        hypothesis=proposal.hypothesis,
+                        base_feature="",
+                        expression=expression,
+                        mutation_reason=proposal.mutation_reason,
+                        demonstration_only=False,
+                        proposal_type=proposal.proposal_type,
+                        evidence_factor_ids=tuple(proposal.evidence_factor_ids),
+                        targeted_failure=(
+                            None
+                            if proposal.targeted_failure == "none"
+                            else proposal.targeted_failure
+                        ),
+                        expected_metric_effect=proposal.expected_metric_effect,
+                        falsification_condition=proposal.falsification_condition,
+                    )
+                else:
+                    spec = FactorSpec(
+                        factor_id=proposal.factor_id,
+                        generation=generation,
+                        parent_ids=tuple(proposal.parent_ids),
+                        family=proposal.family,
+                        hypothesis=proposal.hypothesis,
+                        base_feature=proposal.base_feature,
+                        ts_operator=proposal.ts_operator,
+                        window=proposal.window,
+                        cs_operator=proposal.cs_operator,
+                        interaction_feature=interaction_feature,
+                        interaction_window=interaction_window,
+                        direction=proposal.direction,
+                        mutation_reason=proposal.mutation_reason,
+                        demonstration_only=False,
+                        proposal_type=proposal.proposal_type,
+                        evidence_factor_ids=tuple(proposal.evidence_factor_ids),
+                        targeted_failure=(
+                            None
+                            if proposal.targeted_failure == "none"
+                            else proposal.targeted_failure
+                        ),
+                        expected_metric_effect=proposal.expected_metric_effect,
+                        falsification_condition=proposal.falsification_condition,
+                    )
             except (TypeError, ValueError) as error:
                 rejected.append(f"{reason_prefix}: FactorSpec rejected: {error}")
                 continue

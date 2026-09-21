@@ -119,7 +119,7 @@ def test_proposal_union_is_nested_and_single_recipe_cannot_carry_interaction_fie
 
     assert schema["type"] == "object"
     assert "anyOf" not in schema
-    assert encoded.count("anyOf") == 1
+    assert encoded.count("anyOf") >= 2
     assert "allOf" not in encoded
 
     with pytest.raises(ValidationError):
@@ -197,6 +197,52 @@ def test_structured_proposal_becomes_valid_factor_spec() -> None:
     assert parser.call["text"] == {"verbosity": "low"}
     assert "verbosity" not in parser.call
     assert parser.call["store"] is False
+
+
+def test_typed_expression_proposal_becomes_ast_factor_spec() -> None:
+    batch = FactorProposalBatch.parse_obj(
+        {
+            "research_summary": "A typed expression tests a continuation mechanism.",
+            "proposals": [
+                {
+                    "factor_id": "ast_continuation",
+                    "parent_ids": [],
+                    "hypothesis": "A typed continuation expression may capture gradual information diffusion.",
+                    "direction": 1,
+                    "mutation_reason": "Test explicit AST composition.",
+                    "proposal_type": "exploration",
+                    "evidence_factor_ids": [],
+                    "targeted_failure": "none",
+                    "expected_metric_effect": "Improve horizon robustness.",
+                    "falsification_condition": "Retire if signs are unstable.",
+                    "recipe_kind": "expression",
+                    "family": "price",
+                    "mechanism": "PRICE_TREND",
+                    "expression": {
+                        "kind": "op",
+                        "name": "cs_rank",
+                        "args": [{"kind": "feature", "name": "return", "window": 20}],
+                        "params": {},
+                    },
+                }
+            ],
+        }
+    )
+    client, _ = fake_client(batch)
+    generator = LLMFactorGenerator(generator_config(), client=client)
+
+    result = generator.propose(
+        generation=1,
+        state=ResearchState(),
+        recent_records=[],
+        parent_specs={},
+        parent_decisions={},
+        tested_ids=set(),
+    )
+
+    assert result.used_llm
+    assert result.candidates[0].expression is not None
+    assert result.candidates[0].canonical_formula == "cs_rank(return[20])"
 
 
 def test_unknown_parent_is_rejected() -> None:
