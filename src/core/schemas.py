@@ -225,6 +225,7 @@ class ResearchMemory:
     current_budget: int = 0
     rounds_without_improvement: int = 0
     proposal_failure_counts: dict[str, int] = field(default_factory=dict)
+    parent_cluster_stats: dict[str, dict[str, Any]] = field(default_factory=dict)
     stopped: bool = False
 
     def to_dict(self) -> dict[str, Any]:

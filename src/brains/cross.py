@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from src.core.schemas import ResearchMemory, ResearchOutcome
+from src.research.failure_policy import INTEGRITY_RESPONSES, PRIORITY
 
 
 class CrossBrain:
@@ -32,22 +33,35 @@ class CrossBrain:
                         ],
                     }
                 )
-            elif record.integrity_passed:
+            else:
                 codes = list(record.failure_codes) or ["weak_evidence"]
+                policy = next(
+                    (INTEGRITY_RESPONSES[code] for code in PRIORITY if code in codes),
+                    None,
+                )
                 bad.append(
                     {
                         **evidence,
                         "failure_types": codes,
                         "failed_assumption": outcome.spec.hypothesis,
-                        "avoidance_rule": f"Do not repeat the same {outcome.mechanism} formula without targeting {codes[0]}.",
-                        "possible_repairs": [
-                            "simplify",
-                            "change horizon",
-                            "change cross-sectional normalization",
-                        ],
-                        "terminal": any(
-                            code in {"leakage", "invalid_proposal"} for code in codes
+                        "avoidance_rule": (
+                            policy["instruction"]
+                            if policy
+                            else f"Do not repeat the same {outcome.mechanism} formula without targeting {codes[0]}."
                         ),
+                        "recommended_action": policy["action"]
+                        if policy
+                        else "REPAIR_PARENT",
+                        "possible_repairs": (
+                            []
+                            if policy
+                            else [
+                                "simplify",
+                                "change horizon",
+                                "change cross-sectional normalization",
+                            ]
+                        ),
+                        "terminal": bool(policy and policy["terminal"]),
                     }
                 )
         return good, bad

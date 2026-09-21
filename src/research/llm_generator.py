@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from src.factors.expression import Expr, expr_from_dict, validate_expression
 from src.factors.operator_registry import operator_catalog
 from src.factors.schema import FactorSpec
+from src.research.failure_policy import INTEGRITY_RESPONSES
 from src.research.memory import ResearchState
 from src.utils.logging import ExperimentRecord
 
@@ -59,6 +60,8 @@ class ProposalEvidence(BaseModel):
         "excessive_drawdown",
         "redundancy",
         "insufficient_coverage",
+        "invalid_dsl",
+        "unsupported_group",
     ]
     expected_metric_effect: str
     falsification_condition: str
@@ -182,6 +185,10 @@ window. For recipe_kind="expression", emit a typed AST using kind=feature/consta
 the registry catalog; do not emit a free-form expression string. A transform window belongs
 in operator params and is distinct from a Feature window.
 
+Integrity failures have distinct responses: invalid_dsl requires a fresh valid registry
+expression; unsupported_group requires only available canonical groups; leakage formulas
+and their lineage are terminal and must never be retried. Follow any supplied PIVOT plan.
+
 Every proposal must have a unique snake_case ID, an ex-ante economic mechanism, evidence
 for the change, an expected metric effect, and a falsification condition. Do not reverse a
 direction solely because observed IC was negative; require an economic rationale. High
@@ -235,7 +242,11 @@ class LLMFactorGenerator:
             "targeted_failure": record.targeted_failure,
             "expected_metric_effect": record.expected_metric_effect,
             "falsification_condition": record.falsification_condition,
-            "formula": record.canonical_formula,
+            "formula": (
+                "[quarantined leakage expression]"
+                if "lookahead_or_leakage" in record.failure_codes
+                else record.canonical_formula
+            ),
             "decision": record.decision,
             "reasons": list(record.reasons),
             "mean_rank_ic": record.mean_rank_ic,
@@ -275,6 +286,11 @@ class LLMFactorGenerator:
                 ),
             ),
         )[:history_limit]
+        quarantined_formulas = {
+            record.canonical_formula
+            for record in recent_records
+            if "lookahead_or_leakage" in record.failure_codes
+        }
         return {
             "generation_to_propose": generation,
             "research_plan": research_plan,
@@ -285,7 +301,11 @@ class LLMFactorGenerator:
                 "family_summary": state.family_summary_dict(),
                 "failure_taxonomy": state.failure_taxonomy,
                 "best_patterns": state.best_patterns[-10:],
-                "failed_patterns": state.failed_patterns[-10:],
+                "failed_patterns": [
+                    formula
+                    for formula in state.failed_patterns
+                    if formula not in quarantined_formulas
+                ][-10:],
                 "unexplored_families": state.unexplored_families,
                 "search_budget_remaining": state.search_budget_remaining,
             },
@@ -299,6 +319,13 @@ class LLMFactorGenerator:
             "recent_experiment_records": [
                 self._record_summary(record) for record in selected_records
             ],
+            "recent_integrity_failures": [
+                self._record_summary(record)
+                for record in recent_records
+                if not record.integrity_passed
+                and any(code in INTEGRITY_RESPONSES for code in record.failure_codes)
+            ][-5:],
+            "integrity_response_policy": INTEGRITY_RESPONSES,
             "catalog": {
                 "base_features": [
                     "return",
@@ -382,6 +409,7 @@ class LLMFactorGenerator:
         parent_decisions: dict[str, str],
         tested_ids: set[str],
         prior_formulas: set[str],
+        quarantined_ids: set[str] | None = None,
     ) -> tuple[list[FactorSpec], list[str]]:
         candidates: list[FactorSpec] = []
         rejected: list[str] = []
@@ -392,6 +420,7 @@ class LLMFactorGenerator:
         parent_counts: dict[str, int] = {}
         seen_ids = set(tested_ids)
         seen_formulas = set(prior_formulas)
+        quarantined_ids = quarantined_ids or set()
         windowed = {
             "return",
             "volatility",
@@ -428,6 +457,11 @@ class LLMFactorGenerator:
                 evidence not in tested_ids for evidence in proposal.evidence_factor_ids
             ):
                 rejected.append(f"{reason_prefix}: evidence factor was not tested")
+                continue
+            if any(
+                evidence in quarantined_ids for evidence in proposal.evidence_factor_ids
+            ):
+                rejected.append(f"{reason_prefix}: leakage evidence is quarantined")
                 continue
             if proposal.proposal_type == "exploration" and proposal.parent_ids:
                 rejected.append(f"{reason_prefix}: exploration cannot claim a parent")
@@ -642,6 +676,11 @@ class LLMFactorGenerator:
             or {factor_id: "PROMOTE" for factor_id in parent_specs},
             tested_ids=tested_ids,
             prior_formulas=prior_formulas,
+            quarantined_ids={
+                record.factor_id
+                for record in recent_records
+                if "lookahead_or_leakage" in record.failure_codes
+            },
         )
         if not candidates:
             return LLMGenerationResult(

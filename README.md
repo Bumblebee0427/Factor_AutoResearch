@@ -56,6 +56,7 @@ src/
 │   ├── generator.py       # Generation-0 seeds and cross-family exploration
 │   ├── llm_generator.py   # Structured LLM proposals with local whitelist validation
 │   ├── failures.py        # Stable failure taxonomy for gates, memory, and prompts
+│   ├── failure_policy.py  # Distinct next-round responses to integrity failures
 │   ├── comparison.py      # Search-efficiency and stability comparison metrics
 │   ├── mutator.py         # Bounded exploitation around promoted parents
 │   ├── selector.py        # Pre-committed Promote/Hold/Retire rules
@@ -162,6 +163,8 @@ pytest -q
 - Promotion uses hard gates before tie-breaking; no opaque mega-score is used.
 - Search history is explicit state, not hidden chat context.
 - Correlation and residual IC prevent a library of near-duplicate parameter variants.
+- Parent candidates above 0.90 signal correlation within a mechanism share one pool
+  representative; historical Parent/cluster counts guide Macro Brain pivots.
 - The seed set includes a deliberately leaky future-return factor that must be retired before
   performance evaluation.
 

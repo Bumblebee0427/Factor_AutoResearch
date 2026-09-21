@@ -5,6 +5,8 @@ from __future__ import annotations
 
 FAILURE_CODES = (
     "lookahead_or_leakage",
+    "unsupported_group",
+    "invalid_dsl",
     "insufficient_coverage",
     "integrity_failure",
     "degenerate_signal",
@@ -25,8 +27,57 @@ def classify_failure_reasons(
     codes: list[str] = []
     for reason in reasons:
         normalized = reason.lower()
-        if "future" in normalized or "lookahead" in normalized or "leak" in normalized:
+        if "insufficient history" in normalized:
+            code = "insufficient_coverage"
+        elif any(
+            marker in normalized
+            for marker in (
+                "future",
+                "lookahead",
+                "leak",
+                "negative shift",
+                "centered rolling",
+                "truncation invariance",
+                "future-noise invariance",
+                "backfilling",
+            )
+        ):
             code = "lookahead_or_leakage"
+        elif any(
+            marker in normalized
+            for marker in (
+                "unknown group",
+                "unsupported groups",
+                "group field is unavailable",
+            )
+        ):
+            code = "unsupported_group"
+        elif any(
+            marker in normalized
+            for marker in (
+                "unknown feature",
+                "unknown operator",
+                "unsupported transform",
+                "outside datacontract",
+                "unavailable fields",
+                "ast depth",
+                "ast operator",
+                "ast rolling",
+                "ast binary",
+                "ast group",
+                "complexity",
+                "arguments",
+                "parameters",
+                "window",
+                "halflife",
+                "eps",
+                "clip requires",
+                "min_group_size",
+                "primitive",
+                "dsl",
+            )
+        ):
+            code = "invalid_dsl"
         elif "coverage" in normalized:
             code = "insufficient_coverage"
         elif "variation" in normalized or "degenerate" in normalized:

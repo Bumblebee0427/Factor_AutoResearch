@@ -10,6 +10,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from src.core.schemas import MECHANISMS, FactorArtifact, ResearchMemory, ResearchPlan
+from src.research.failure_policy import dominant_integrity_response
 
 
 class DeterministicMacroBrain:
@@ -62,9 +63,44 @@ class DeterministicMacroBrain:
         if remaining_budget <= 0:
             return self._stop("Candidate budget exhausted.")
         coverage = self.coverage_status(memory)
+        min_evidence = int(self.config.get("minimum_evidence_before_stop", 10))
+        stop_rounds = int(self.config.get("stop_rounds_without_improvement", 2))
+        if (
+            coverage["satisfied"]
+            and len(memory.recent_experiments) >= min_evidence
+            and memory.rounds_without_improvement >= stop_rounds
+        ):
+            return self._stop(
+                "No elite improvement within the precommitted patience window."
+            )
+
+        tested = coverage["tested"]
+        order = {mechanism: index for index, mechanism in enumerate(MECHANISMS)}
+        least_tested = min(MECHANISMS, key=lambda item: (tested[item], order[item]))
+        if memory.recent_round_summaries:
+            response = dominant_integrity_response(memory.recent_round_summaries[-1])
+            if response:
+                code, policy = response
+                current = (memory.current_theme or "").upper()
+                if code == "lookahead_or_leakage":
+                    alternatives = [
+                        item for item in coverage["undercovered"] if item != current
+                    ] or [item for item in MECHANISMS if item != current]
+                    mechanism = min(
+                        alternatives, key=lambda item: (tested[item], order[item])
+                    )
+                else:
+                    mechanism = current if current in MECHANISMS else least_tested
+                return ResearchPlan(
+                    "PIVOT",
+                    f"integrity_{code}",
+                    mechanism,
+                    policy["instruction"],
+                    (),
+                    f"Integrity response {policy['action']} after {code} dominated the last round.",
+                    self._budget("PIVOT", remaining_budget),
+                )
         if not coverage["satisfied"]:
-            tested = coverage["tested"]
-            order = {mechanism: index for index, mechanism in enumerate(MECHANISMS)}
             mechanism = min(
                 coverage["undercovered"],
                 key=lambda item: (tested[item], order[item]),
@@ -81,19 +117,6 @@ class DeterministicMacroBrain:
                     int(coverage["minimum_per_mechanism"]) - int(tested[mechanism]),
                 ),
             )
-        min_evidence = int(self.config.get("minimum_evidence_before_stop", 10))
-        stop_rounds = int(self.config.get("stop_rounds_without_improvement", 2))
-        if (
-            len(memory.recent_experiments) >= min_evidence
-            and memory.rounds_without_improvement >= stop_rounds
-        ):
-            return self._stop(
-                "No elite improvement within the precommitted patience window."
-            )
-
-        tested = coverage["tested"]
-        order = {mechanism: index for index, mechanism in enumerate(MECHANISMS)}
-        least_tested = min(MECHANISMS, key=lambda item: (tested[item], order[item]))
         if not parent_pool:
             return ResearchPlan(
                 "PIVOT",
@@ -165,6 +188,27 @@ class DeterministicMacroBrain:
                 )
 
         best = ranked[0]
+        if self._is_saturated(memory, best.mechanism):
+            alternatives = [
+                item
+                for item in MECHANISMS
+                if item != best.mechanism and not self._is_saturated(memory, item)
+            ]
+            if alternatives:
+                mechanism = min(
+                    alternatives, key=lambda item: (tested[item], order[item])
+                )
+                stats = memory.parent_cluster_stats[best.mechanism]
+                return ResearchPlan(
+                    "PIVOT",
+                    "saturation_pivot",
+                    mechanism,
+                    "Explore a distinct economic mechanism with a new parent-free hypothesis.",
+                    (),
+                    f"{best.mechanism} has {stats['parent_candidates']} qualifying parents "
+                    f"but only {stats['unique_clusters']} unique signal clusters.",
+                    self._budget("PIVOT", remaining_budget),
+                )
         return ResearchPlan(
             "IMPROVE",
             best.mechanism.lower(),
@@ -173,6 +217,16 @@ class DeterministicMacroBrain:
             (best.spec.factor_id,),
             "The current parent is promising but not yet robust enough.",
             self._budget("IMPROVE", remaining_budget),
+        )
+
+    def _is_saturated(self, memory: ResearchMemory, mechanism: str) -> bool:
+        stats = memory.parent_cluster_stats.get(mechanism, {})
+        parents = int(stats.get("parent_candidates", 0))
+        clusters = int(stats.get("unique_clusters", 0))
+        return parents >= int(
+            self.config.get("saturation_min_parent_candidates", 6)
+        ) and clusters / max(parents, 1) <= float(
+            self.config.get("saturation_max_cluster_ratio", 0.40)
         )
 
     def _stop(self, reason: str) -> ResearchPlan:
@@ -230,7 +284,9 @@ exactly two eligible parents from complementary mechanisms whose supplied absolu
 correlation is below the limit. PIVOT requires no parent and should target an under-tested
 mechanism. STOP requires adequate total evidence, completed mechanism coverage, and stalled
 progress, unless the candidate budget is exhausted. Prefer a targeted repair over cosmetic
-parameter search. Return only the structured plan."""
+parameter search. If a mechanism has many qualifying Parents but few unique signal clusters,
+prefer PIVOT to an unsaturated mechanism. Follow the supplied integrity failure response;
+never retry a quarantined leakage formula. Return only the structured plan."""
 
 
 class LLMMacroBrain:
@@ -263,6 +319,7 @@ class LLMMacroBrain:
         elite_archive: dict[str, FactorArtifact],
         remaining_budget: int,
         parent_correlations: dict[tuple[str, str], float],
+        deterministic_plan: ResearchPlan,
     ) -> dict:
         parents = {}
         for factor_id, artifact in sorted(parent_pool.items()):
@@ -283,9 +340,28 @@ class LLMMacroBrain:
             {"left": pair[0], "right": pair[1], "absolute_correlation": abs(value)}
             for pair, value in sorted(parent_correlations.items())
         ]
+        planner = DeterministicMacroBrain(self.research_config)
+
+        def cluster_context(mechanism: str, stats: dict) -> dict:
+            saturated = planner._is_saturated(memory, mechanism)
+            return {
+                **stats,
+                "saturated": saturated,
+                "interpretation": (
+                    "research neighborhood is becoming saturated"
+                    if saturated
+                    else "additional independent directions remain plausible"
+                ),
+            }
+
         return {
             "remaining_candidate_budget": remaining_budget,
+            "deterministic_plan": deterministic_plan.to_dict(),
             "mechanism_stats": memory.mechanism_stats,
+            "parent_cluster_stats": {
+                mechanism: cluster_context(mechanism, stats)
+                for mechanism, stats in memory.parent_cluster_stats.items()
+            },
             "recent_rounds": memory.recent_round_summaries[-6:],
             "good_lessons": memory.good_lessons[-8:],
             "bad_lessons": memory.bad_lessons[-8:],
@@ -333,6 +409,7 @@ class LLMMacroBrain:
                         elite_archive,
                         remaining_budget,
                         parent_correlations,
+                        deterministic_plan,
                     ),
                     sort_keys=True,
                     default=str,
@@ -420,6 +497,16 @@ class LLMMacroBrain:
             return None
         if proposal.candidate_budget < 1:
             return "non-STOP action requires a positive candidate budget"
+        if deterministic_plan.theme.startswith("integrity_") and (
+            proposal.action != "PIVOT"
+            or proposal.mechanism != deterministic_plan.mechanism
+        ):
+            return "integrity response requires the planned parent-free PIVOT"
+        if deterministic_plan.theme == "saturation_pivot" and (
+            proposal.action != "PIVOT"
+            or proposal.mechanism != deterministic_plan.mechanism
+        ):
+            return "saturated Parent neighborhood requires the planned PIVOT"
         if proposal.action == "PIVOT":
             return "PIVOT cannot carry parents" if proposal.parent_ids else None
         if any(parent_id not in parent_pool for parent_id in proposal.parent_ids):

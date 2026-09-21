@@ -14,7 +14,7 @@ structured outcomes. This repository maps those roles as follows:
 | Deterministic execution | `src/factors/builder.py` |
 | Unified evaluator | `src/evaluation/evaluator.py` |
 | Transparent gatekeeper | `src/research/selector.py` |
-| Memory and policy update | `src/research/memory.py`, `src/research/failures.py` |
+| Memory and policy update | `src/research/memory.py`, `src/research/failures.py`, `src/research/failure_policy.py` |
 | Structured experiment trace | `src/utils/logging.py` |
 | Frozen out-of-sample policy | physical parquet split plus `scripts/final_holdout.py` |
 
@@ -43,6 +43,23 @@ Each round is `plan -> propose -> static/alignment/dynamic checks -> common eval
 tier -> reflect -> checkpoint`. `IMPROVE` repairs a parent, `COMBINE` crosses distinct
 mechanisms, `PIVOT` explores an under-tested mechanism, and `STOP` freezes the evidence.
 The Macro Brain does not author formulas, and the Cross Brain does not alter metrics.
+
+The Parent Pool clusters qualifying PARENT/ELITE signals within each mechanism. It
+compares absolute mean daily cross-sectional Spearman correlation on a deterministic sample
+of up to 96 research dates; correlation above 0.90 keeps the stronger representative.
+The sample requires at least 20 dates with five overlapping stocks each. Historical cluster
+counts survive the active pool capacity limit. Macro Brain sees both the cumulative number
+of qualifying parents and unique clusters per mechanism. Once at least six parents have
+been observed and the cluster-to-parent ratio is at most 0.40, it pivots away from that
+neighborhood when it would otherwise continue IMPROVE.
+
+Integrity failures have explicit follow-up policies in `src/research/failure_policy.py`.
+Invalid DSL triggers a fresh proposal from the registered grammar; unsupported groups
+trigger parent-free proposals using the actual sector and subindustry fields, followed by
+other valid group-free alternatives; detected leakage
+quarantines the formula and pivots to another mechanism. These policies route the next
+round when such failures dominate a round with no PARENT or ELITE result. The resulting
+action, failure counts, and Parent cluster admissions are recorded in the round trace.
 
 The implementation follows the project brief rather than reproducing all XALPHA machinery:
 there is no runtime PDF retrieval, 48-archetype ontology, arbitrary code generation, swarm,
@@ -89,6 +106,11 @@ Search comparison uses only 2013-2015 walk-forward evidence. “Effective new in
 defined operationally as a unique candidate that passes integrity checks and produces a
 complete walk-forward record; invalid structured proposals and duplicate formulas remain in
 the denominator. The untouched 2016 parquet is not loaded by the comparison runner.
+
+Residual IC remains pairwise: during research it is computed against the most correlated
+existing elite signal when the research redundancy threshold is exceeded. During final
+library selection it is computed against the closest selected signal above the tighter
+library threshold. Parent Pool clustering does not change those calculations.
 
 ## Anthelion-specific adaptations
 

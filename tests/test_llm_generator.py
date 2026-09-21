@@ -288,10 +288,28 @@ def test_unknown_parent_is_rejected() -> None:
 
 def test_llm_context_excludes_raw_data_and_holdout_year() -> None:
     generator = LLMFactorGenerator(generator_config(enabled=False))
+    invalid_group = make_record(
+        factor_id="bad_group",
+        integrity_passed=False,
+        decision="RETIRE",
+        failure_codes=("unsupported_group",),
+        integrity_issues=("Unknown group: industry",),
+    )
+    leaked = make_record(
+        factor_id="leaked",
+        canonical_formula="future_return[5]",
+        integrity_passed=False,
+        decision="RETIRE",
+        failure_codes=("lookahead_or_leakage",),
+        integrity_issues=("Factor references future data.",),
+    )
     context = generator.build_context(
         generation=1,
-        state=ResearchState(promoted_factor_ids=["price_parent"]),
-        recent_records=[make_record()],
+        state=ResearchState(
+            promoted_factor_ids=["price_parent"],
+            failed_patterns=["future_return[5]"],
+        ),
+        recent_records=[make_record(), invalid_group, leaked],
         parent_specs={"price_parent": make_parent()},
         parent_decisions={"price_parent": "PROMOTE"},
     )
@@ -302,3 +320,9 @@ def test_llm_context_excludes_raw_data_and_holdout_year() -> None:
         == "withheld; never reference or infer it"
     )
     assert "panel" not in context
+    assert context["recent_integrity_failures"][0]["factor_id"] == "bad_group"
+    assert (
+        context["integrity_response_policy"]["unsupported_group"]["action"]
+        == "REPROPOSE_VALID_GROUP"
+    )
+    assert "future_return[5]" not in json.dumps(context)

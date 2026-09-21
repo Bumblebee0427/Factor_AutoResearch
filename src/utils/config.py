@@ -72,6 +72,22 @@ def load_config(path: str | Path) -> dict[str, Any]:
         )
     if int(adaptive.get("max_rounds", 1)) < 1:
         raise ValueError("Adaptive research requires at least one round.")
+    if not 0 < float(adaptive.get("parent_cluster_correlation", 0.90)) <= 1:
+        raise ValueError("Parent cluster correlation must be in (0, 1].")
+    if int(adaptive.get("parent_cluster_min_dates", 20)) < 1:
+        raise ValueError("Parent cluster minimum dates must be positive.")
+    if int(adaptive.get("parent_cluster_min_names", 5)) < 2:
+        raise ValueError("Parent cluster minimum names must be at least two.")
+    if int(adaptive.get("parent_cluster_max_dates", 96)) < int(
+        adaptive.get("parent_cluster_min_dates", 20)
+    ):
+        raise ValueError("Parent cluster date sample must cover the minimum overlap.")
+    if int(adaptive.get("max_group_reproposals_per_round", 2)) < 1:
+        raise ValueError("Group reproposal cap must be positive.")
+    if int(adaptive.get("saturation_min_parent_candidates", 6)) < 1:
+        raise ValueError("Saturation minimum parents must be positive.")
+    if not 0 <= float(adaptive.get("saturation_max_cluster_ratio", 0.40)) <= 1:
+        raise ValueError("Saturation cluster ratio must be in [0, 1].")
     return config
 
 

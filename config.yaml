@@ -93,6 +93,13 @@ adaptive_research:
   pivot_failure_threshold: 3
   combine_max_parent_correlation: 0.50
   parent_pool_size: 20
+  parent_cluster_correlation: 0.90
+  parent_cluster_min_dates: 20
+  parent_cluster_min_names: 5
+  parent_cluster_max_dates: 96
+  max_group_reproposals_per_round: 2
+  saturation_min_parent_candidates: 6
+  saturation_max_cluster_ratio: 0.40
   elite_archive_size: 12
   dynamic_leakage_enabled: true
   dynamic_leakage_sample_tickers: 4

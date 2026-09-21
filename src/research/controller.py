@@ -28,6 +28,11 @@ from src.memory.store import ResearchMemoryStore
 from src.quality.alignment import check_alignment
 from src.quality.dynamic_leakage import check_dynamic_leakage
 from src.quality.static_checks import check_factor_spec
+from src.research.failure_policy import (
+    INTEGRITY_RESPONSES,
+    integrity_response_counts,
+    valid_group_reproposals,
+)
 from src.research.loop import ResearchLoop
 from src.selection.archive import EliteArchive, ParentPool
 from src.selection.gates import classify_tier
@@ -62,7 +67,21 @@ class AdaptiveResearchController:
             config.get("llm", {}), self.micro, client=micro_client
         )
         self.cross = CrossBrain()
-        self.parent_pool = ParentPool(int(self.settings.get("parent_pool_size", 20)))
+        self.parent_pool = ParentPool(
+            int(self.settings.get("parent_pool_size", 20)),
+            correlation_threshold=float(
+                self.settings.get("parent_cluster_correlation", 0.90)
+            ),
+            minimum_overlap_dates=int(
+                self.settings.get("parent_cluster_min_dates", 20)
+            ),
+            minimum_names_per_date=int(
+                self.settings.get("parent_cluster_min_names", 5)
+            ),
+            maximum_comparison_dates=int(
+                self.settings.get("parent_cluster_max_dates", 96)
+            ),
+        )
         self.elite_archive = EliteArchive(
             int(self.settings.get("elite_archive_size", 12))
         )
@@ -164,6 +183,48 @@ class AdaptiveResearchController:
                 proposals = self.micro.generate(
                     plan, self.parent_pool.items, self.tested_formulas, round_id
                 )
+            integrity_reproposals: list = []
+            if plan.theme == "integrity_unsupported_group":
+                previous_round = self.memory.recent_round_summaries[-1]["round_id"]
+                allowed_groups = tuple(
+                    group
+                    for group, field in self.contract.group_fields.items()
+                    if field in self.panel
+                )
+                for outcome in self.outcomes:
+                    if (
+                        outcome.spec.generation == previous_round
+                        and "unsupported_group" in outcome.record.failure_codes
+                    ):
+                        integrity_reproposals.extend(
+                            valid_group_reproposals(
+                                outcome.spec,
+                                round_id=round_id,
+                                allowed_groups=allowed_groups,
+                            )
+                        )
+                        if len(integrity_reproposals) >= int(
+                            self.settings.get("max_group_reproposals_per_round", 2)
+                        ):
+                            break
+                integrity_reproposals = integrity_reproposals[
+                    : int(self.settings.get("max_group_reproposals_per_round", 2))
+                ]
+                merged = integrity_reproposals + proposals
+                seen_formulas = set(self.tested_formulas)
+                seen_ids = set(self.tested_ids)
+                proposals = []
+                for candidate in merged:
+                    if (
+                        candidate.canonical_formula in seen_formulas
+                        or candidate.factor_id in seen_ids
+                    ):
+                        continue
+                    proposals.append(candidate)
+                    seen_formulas.add(candidate.canonical_formula)
+                    seen_ids.add(candidate.factor_id)
+                    if len(proposals) >= plan.candidate_budget:
+                        break
             rescue_reason = None
             if not proposals and remaining > 0:
                 rescue_plan, rescue = self._novelty_rescue(round_id, remaining)
@@ -194,10 +255,15 @@ class AdaptiveResearchController:
                     break
             llm_event = self._llm_event(round_id, macro_result, micro_result)
             llm_event["novelty_rescue"] = rescue_reason
+            llm_event["integrity_reproposal_count"] = sum(
+                candidate.proposal_type == "integrity_reproposal"
+                for candidate in proposals
+            )
             self.llm_events.append(llm_event)
             self._append_llm_event(llm_event)
             self.total_proposed += len(proposals)
             round_outcomes: list[ResearchOutcome] = []
+            parent_admissions: list[dict] = []
             duplicate_count = 0
             for spec in proposals:
                 if remaining <= 0:
@@ -246,6 +312,12 @@ class AdaptiveResearchController:
                     )
                 else:
                     record, signal = self.base_loop.evaluate_candidate(spec)
+                if not record.integrity_passed:
+                    for code in record.failure_codes:
+                        if code in INTEGRITY_RESPONSES:
+                            self.memory.proposal_failure_counts[code] = (
+                                self.memory.proposal_failure_counts.get(code, 0) + 1
+                            )
                 self.base_loop.records.append(record)
                 self.base_loop.store.append(record)
                 tier = classify_tier(record, self.settings)
@@ -259,7 +331,19 @@ class AdaptiveResearchController:
                     self.signals[spec.factor_id] = signal
                 if tier.tier in {"PARENT", "ELITE"} and signal is not None:
                     artifact = FactorArtifact(spec, record, mechanism)
-                    self.parent_pool.add(artifact)
+                    admission = self.parent_pool.add(
+                        artifact, signal, self.signals, self.panel["date"]
+                    )
+                    parent_admissions.append(
+                        {
+                            "factor_id": spec.factor_id,
+                            "mechanism": mechanism,
+                            "status": admission.status,
+                            "representative_id": admission.representative_id,
+                            "absolute_correlation": admission.absolute_correlation,
+                            "evicted_ids": list(admission.evicted_ids),
+                        }
+                    )
                     if tier.tier == "ELITE":
                         self.elite_archive.add(artifact)
                         self.base_loop.promoted_specs[spec.factor_id] = spec
@@ -277,9 +361,22 @@ class AdaptiveResearchController:
                 },
                 "remaining_budget": remaining,
                 "coverage": self.macro.coverage_status(self.memory),
+                "integrity_failure_counts": integrity_response_counts(round_outcomes),
+                "integrity_failure_total": sum(
+                    not item.record.integrity_passed
+                    and any(
+                        code in INTEGRITY_RESPONSES
+                        for code in item.record.failure_codes
+                    )
+                    for item in round_outcomes
+                ),
+                "parent_cluster_stats": self.parent_pool.cluster_stats(),
+                "parent_admissions": parent_admissions,
                 "llm": llm_event,
             }
             self.cross.update_memory(self.memory, round_outcomes, summary)
+            self.memory.parent_pool_ids = list(self.parent_pool.items)
+            self.memory.parent_cluster_stats = self.parent_pool.cluster_stats()
             self.memory_store.append_round(
                 {
                     "plan": plan.to_dict(),
@@ -483,6 +580,7 @@ class AdaptiveResearchController:
             if self.outcomes
             else 0.0,
             "parent_pool_size": len(self.parent_pool.items),
+            "parent_cluster_stats": self.memory.parent_cluster_stats,
             "elite_archive_size": len(self.elite_archive.items),
             "elite_mechanism_diversity": len(mechanisms),
             "elite_walk_forward_sign_stability": sum(stable) / len(stable)
