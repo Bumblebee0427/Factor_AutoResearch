@@ -8,7 +8,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Literal, Union
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from src.factors.expression import Expr, expr_from_dict, validate_expression
 from src.factors.operator_registry import operator_catalog
@@ -107,11 +107,27 @@ class ExpressionConstantProposal(BaseModel):
         extra = "forbid"
 
 
+class ExpressionParams(BaseModel):
+    """Closed parameter object for strict Responses API schemas."""
+
+    window: int | None = None
+    halflife: float | None = None
+    periods: int | None = None
+    eps: float | None = None
+    lower: float | None = None
+    upper: float | None = None
+    group: Literal["sector", "subindustry"] | None = None
+    min_group_size: int | None = None
+
+    class Config:
+        extra = "forbid"
+
+
 class ExpressionOpProposal(BaseModel):
     kind: Literal["op"]
     name: str
     args: list["ExpressionNode"]
-    params: dict[str, object] = {}
+    params: ExpressionParams
 
     class Config:
         extra = "forbid"
@@ -525,7 +541,7 @@ class LLMFactorGenerator:
 
             try:
                 if is_expression:
-                    expression_payload = proposal.expression.dict()
+                    expression_payload = proposal.expression.dict(exclude_none=True)
                     expression = expr_from_dict(expression_payload)
                     expression_check = validate_expression(
                         expression,
@@ -653,6 +669,16 @@ class LLMFactorGenerator:
         except (
             Exception
         ) as error:  # API failures must not corrupt deterministic research.
+            # A model can return a response envelope whose structured text is not
+            # parseable JSON. Treat that as a model-output failure, not as a reason
+            # to abort an otherwise auditable research trajectory; the controller
+            # will use its constrained novelty rescue for this round.
+            if isinstance(error, ValidationError):
+                return LLMGenerationResult(
+                    (),
+                    False,
+                    f"invalid_structured_output:{type(error).__name__}",
+                )
             if self.config.get("required", False):
                 raise
             return LLMGenerationResult((), False, f"api_error:{type(error).__name__}")

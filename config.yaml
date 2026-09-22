@@ -129,11 +129,11 @@ llm:
   model_env: OPENAI_FACTOR_MODEL
   api_key_env: OPENAI_API_KEY
   reasoning_mode: standard
-  reasoning_effort: low
+  reasoning_effort: high
   verbosity: low
   max_output_tokens: 6000
   store: false
-  prompt_cache_key: factor-autoresearch-v1
+  prompt_cache_key: factor-autoresearch-luna-high-v1
   max_history_records: 20
   max_proposals_per_generation: 6
   allowed_windows: [1, 5, 10, 20, 60]
