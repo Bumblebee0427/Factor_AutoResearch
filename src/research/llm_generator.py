@@ -521,6 +521,8 @@ class LLMFactorGenerator:
 
     @property
     def model(self) -> str:
+        if self.config.get("resolved_model"):
+            return str(self.config["resolved_model"])
         model_env = self.config.get("model_env", "OPENAI_FACTOR_MODEL")
         return os.environ.get(model_env, self.config.get("model", "gpt-4o-mini"))
 

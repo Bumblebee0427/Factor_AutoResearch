@@ -51,6 +51,7 @@ class ResearchLoop:
         )
         self.llm_generator = llm_generator or LLMFactorGenerator(llm_config)
         self.records: list[ExperimentRecord] = []
+        self.evaluated_specs: dict[str, FactorSpec] = {}
         self.promoted_specs: dict[str, FactorSpec] = {}
         self.promoted_signals: dict[str, pd.Series] = {}
         self.eligible_parent_specs: dict[str, FactorSpec] = {}
@@ -222,6 +223,7 @@ class ResearchLoop:
                 tested_ids.add(spec.factor_id)
                 tested_formulas.add(spec.canonical_formula)
                 record, signal = self.evaluate_candidate(spec)
+                self.evaluated_specs[spec.factor_id] = spec
                 self.records.append(record)
                 generation_records.append(record)
                 self.store.append(record)

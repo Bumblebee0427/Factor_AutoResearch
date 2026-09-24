@@ -35,6 +35,7 @@ from src.research.failure_policy import (
     valid_group_reproposals,
 )
 from src.research.loop import ResearchLoop
+from src.research.model_roles import role_llm_config
 from src.selection.archive import EliteArchive, ParentPool
 from src.selection.diagnostics import diagnose_elite_gates
 from src.selection.gates import classify_tier
@@ -63,10 +64,14 @@ class AdaptiveResearchController:
         self.micro = DeterministicMicroBrain()
         self.use_llm = use_llm
         self.llm_macro = LLMMacroBrain(
-            config.get("llm", {}), self.settings, client=macro_client
+            role_llm_config(config.get("llm", {}), "macro"),
+            self.settings,
+            client=macro_client,
         )
         self.llm_micro = AdaptiveLLMMicroBrain(
-            config.get("llm", {}), self.micro, client=micro_client
+            role_llm_config(config.get("llm", {}), "micro"),
+            self.micro,
+            client=micro_client,
         )
         self.cross = CrossBrain()
         self.parent_pool = ParentPool(

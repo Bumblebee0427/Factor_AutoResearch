@@ -127,6 +127,14 @@ llm:
   endpoint: responses
   model: gpt-5.6-luna
   model_env: OPENAI_FACTOR_MODEL
+  macro:
+    model_env: OPENAI_MACRO_MODEL
+    reasoning_effort: high
+    verbosity: low
+  micro:
+    model_env: OPENAI_MICRO_MODEL
+    reasoning_effort: high
+    verbosity: low
   api_key_env: OPENAI_API_KEY
   reasoning_mode: standard
   reasoning_effort: high

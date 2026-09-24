@@ -312,6 +312,8 @@ class LLMMacroBrain:
 
     @property
     def model(self) -> str:
+        if self.llm_config.get("resolved_model"):
+            return str(self.llm_config["resolved_model"])
         model_env = self.llm_config.get("model_env", "OPENAI_FACTOR_MODEL")
         return os.environ.get(model_env, self.llm_config.get("model", "gpt-5.6-luna"))
 
