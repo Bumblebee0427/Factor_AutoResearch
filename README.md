@@ -128,7 +128,7 @@ python -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
 export OPENAI_API_KEY="your-key"       # optional; omit for deterministic fallback
-export OPENAI_FACTOR_MODEL="gpt-5.6-luna"  # optional model override
+export OPENAI_FACTOR_MODEL="gpt-6-luna"  # optional model override
 
 python scripts/prepare_data.py
 python scripts/run_loop.py                  # safe dry-run

@@ -524,7 +524,7 @@ class LLMFactorGenerator:
         if self.config.get("resolved_model"):
             return str(self.config["resolved_model"])
         model_env = self.config.get("model_env", "OPENAI_FACTOR_MODEL")
-        return os.environ.get(model_env, self.config.get("model", "gpt-4o-mini"))
+        return os.environ.get(model_env, self.config.get("model", "gpt-6-luna"))
 
     def _api_key(self) -> str | None:
         return os.environ.get(self.config.get("api_key_env", "OPENAI_API_KEY"))

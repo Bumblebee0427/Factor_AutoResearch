@@ -125,7 +125,7 @@ llm:
   required: false
   provider: openai
   endpoint: responses
-  model: gpt-5.6-luna
+  model: gpt-6-luna
   model_env: OPENAI_FACTOR_MODEL
   macro:
     model_env: OPENAI_MACRO_MODEL
@@ -141,7 +141,7 @@ llm:
   verbosity: low
   max_output_tokens: 6000
   store: false
-  prompt_cache_key: factor-autoresearch-luna-high-v1
+  prompt_cache_key: factor-autoresearch-gpt6-high-v1
   max_history_records: 20
   max_proposals_per_generation: 6
   allowed_windows: [1, 5, 10, 20, 60]

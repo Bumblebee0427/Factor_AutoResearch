@@ -18,6 +18,6 @@ def role_llm_config(shared: dict, role: str) -> dict:
         resolved = override["model"]
     else:
         shared_env = shared.get("model_env", "OPENAI_FACTOR_MODEL")
-        resolved = os.environ.get(shared_env, shared.get("model", "gpt-5.6-luna"))
+        resolved = os.environ.get(shared_env, shared.get("model", "gpt-6-luna"))
     config["resolved_model"] = resolved
     return config

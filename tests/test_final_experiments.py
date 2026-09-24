@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import yaml
 
 from scripts.run_final_experiments import arm_is_reusable, load_research_panel
 from src.research.cost_accounting import combine_usage, estimate_cost, role_usage
@@ -46,6 +47,25 @@ def test_role_tokens_cached_tokens_and_explicit_prices():
     missing_cache = role_usage([{"macro": {"response_id": "m2", "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}}}], "macro")
     assert missing_cache["cached_input_tokens"] is None
     assert estimate_cost(missing_cache, "model", pricing) is None
+
+
+def test_gpt6_model_ids_and_standard_price_card():
+    root = Path(__file__).resolve().parents[1]
+    config = yaml.safe_load((root / "config.yaml").read_text())
+    pricing = yaml.safe_load((root / "experiment_pricing.yaml").read_text())["experiment_pricing"]
+    assert config["llm"]["model"] == "gpt-6-luna"
+    assert config["llm"]["macro"]["reasoning_effort"] == "high"
+    assert config["llm"]["micro"]["reasoning_effort"] == "high"
+    assert pricing["models"]["gpt-6-luna"] == {
+        "input_per_million_usd": 0.10,
+        "cached_input_per_million_usd": 0.01,
+        "output_per_million_usd": 0.50,
+    }
+    assert pricing["models"]["gpt-6-sol"] == {
+        "input_per_million_usd": 2.00,
+        "cached_input_per_million_usd": 0.20,
+        "output_per_million_usd": 10.00,
+    }
 
 
 def test_current_gate_reclassifies_legacy_record_for_reporting():

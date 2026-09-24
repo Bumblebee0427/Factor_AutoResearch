@@ -125,7 +125,7 @@ def render_report(result: dict, manifest: dict, figure_names: list[str], root: P
     ]
     lines += markdown_table([{"arm": name, "status": manifest["arms"].get(name, {}).get("status", "not run"), "models": "/".join(ROLE_NAMES.get(name, ("—", "—")))} for name in expected_arms], [("arm", "Arm"), ("status", "Status"), ("models", "Macro / Micro")])
     if missing_llm:
-        lines += ["", "The model arms were not executed: this environment did not grant permission to send project-derived research-state summaries and factor proposals to the OpenAI API. Their absent results are not zero-valued outcomes. No LLM advantage or role allocation can be inferred from this partial run."]
+        lines += ["", "Some model arms are incomplete. Their absent results are not zero-valued outcomes; comparisons involving those arms remain unavailable."]
     lines += ["", "## A · Initial vs post-feedback", ""]
     lines += markdown_table(result["cohorts"], [("arm", "Arm"), ("cohort", "Cohort"), ("candidate_count", "N"), ("median_mean_rank_ic", "Median IC"), ("p75_mean_rank_ic", "P75 IC"), ("median_newey_west_tstat", "Median NW t"), ("all_positive_fold_rate", "All-positive folds"), ("median_high_cost_sharpe", "Median high-cost Sharpe"), ("parent_rate", "Parent rate"), ("elite_rate", "Elite rate")])
     lines += ["", "## B · Architecture", ""]
@@ -138,7 +138,8 @@ def render_report(result: dict, manifest: dict, figure_names: list[str], root: P
     usage_map = {row["arm"]: row for row in result["token_usage"]}
     comparison = [{**row, **cost_map[row["arm"]], **usage_map[row["arm"]]} for row in model_summaries]
     lines += markdown_table(comparison, [("arm", "Arm"), ("macro_model_id", "Macro model"), ("micro_model_id", "Micro model"), ("combined_total_tokens", "Total tokens"), ("total_estimated_cost_usd", "Est. USD"), ("unique_parent_clusters", "Unique clusters"), ("unique_parent_clusters_per_100k_tokens", "Clusters / 100k tokens"), ("median_mean_rank_ic", "Median IC")])
-    lines += ["", f"Pricing as of {result['pricing_as_of']} from [Luna](https://developers.openai.com/api/docs/models/gpt-5.6-luna) and [Sol](https://developers.openai.com/api/docs/models/gpt-5.6-sol) model pages. Costs are estimates from recorded token usage, not invoice amounts.", "", "## Repair evidence", ""]
+    source_urls = manifest["pricing_source_urls"]
+    lines += ["", f"Pricing as of {result['pricing_as_of']} from [Luna]({source_urls['luna']}) and [Sol]({source_urls['sol']}) model pages. Costs are estimates from recorded token usage, not invoice amounts; cache-write premiums are not separately measured.", "", "## Repair evidence", ""]
     lines += markdown_table(result["repairs"], [("arm", "Arm"), ("parent_factor_id", "Parent"), ("child_factor_id", "Child"), ("targeted_failure", "Target"), ("delta_mean_rank_ic", "Δ IC"), ("delta_high_cost_sharpe", "Δ high-cost Sharpe"), ("target_improved", "Target improved"), ("collateral_damage", "Collateral damage"), ("repair_succeeded", "Repair succeeded")])
     if "adaptive_deterministic" in by_name:
         gate_counts = result["elite_gate_counts"]["adaptive_deterministic"]
