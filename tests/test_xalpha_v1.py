@@ -13,6 +13,7 @@ from src.brains.micro import (
 from src.core.schemas import FactorArtifact, ResearchMemory, ResearchPlan
 from src.factors.primitives import future_return
 from src.factors.schema import FactorSpec
+from src.factors.expression import Feature
 from src.memory.store import ResearchMemoryStore
 from src.quality.alignment import check_alignment
 from src.quality.dynamic_leakage import check_dynamic_leakage
@@ -390,6 +391,19 @@ def test_combine_preserves_both_parent_directions() -> None:
 
     assert proposals
     assert all(proposal.direction == -1 for proposal in proposals)
+
+
+def test_flat_crossover_does_not_fabricate_empty_features_from_ast_parents() -> None:
+    ast_parent = make_spec("ast_parent", base_feature="", window=None, expression=Feature("return", 20))
+    flat_parent = make_spec("flat_parent", base_feature="earnings_yield", window=None)
+    parents = {
+        "ast_parent": FactorArtifact(ast_parent, make_record("ast_parent"), "PRICE_TREND"),
+        "flat_parent": FactorArtifact(flat_parent, make_record("flat_parent"), "FUNDAMENTAL_VALUE"),
+    }
+    plan = ResearchPlan("COMBINE", "crossover", "CROSS_DOMAIN_REGIME", "Test distinct parents.", ("ast_parent", "flat_parent"), "Complementary information.", 3)
+    assert DeterministicMicroBrain().generate(plan, parents, set(), 18) == []
+    with pytest.raises(ValueError, match="non-empty base feature"):
+        make_spec("invalid", base_feature="", window=None, expression=None)
 
 
 def test_micro_turnover_repair_only_generates_smoother_longer_variants() -> None:

@@ -489,6 +489,11 @@ class DeterministicMicroBrain:
         if len(parents) < 2:
             return []
         left, right = parents[:2]
+        # Flat crossover cannot represent AST-only parents. The structured LLM
+        # may still propose a typed interaction; do not fabricate an empty
+        # legacy base feature as a deterministic fill candidate.
+        if left.spec.expression is not None or right.spec.expression is not None:
+            return []
         proposals: list[FactorSpec] = []
         number = 0
         for primary in (left.spec, right.spec):

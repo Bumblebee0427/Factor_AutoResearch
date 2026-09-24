@@ -121,10 +121,10 @@ class AdaptiveResearchController:
             )
         )
 
-    def run(self) -> list[ResearchOutcome]:
-        remaining = self.max_candidates
+    def run(self, *, start_round: int = 0) -> list[ResearchOutcome]:
+        remaining = self.max_candidates - len(self.outcomes)
         max_rounds = int(self.settings.get("max_rounds", 8))
-        for round_id in range(max_rounds):
+        for round_id in range(start_round, max_rounds):
             coverage_complete = self.macro.coverage_satisfied(self.memory)
             parent_correlations: dict[tuple[str, str], float] = {}
             parent_ids = list(self.parent_pool.items)

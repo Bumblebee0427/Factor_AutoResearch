@@ -69,6 +69,8 @@ class FactorSpec:
     expression: Expr | None = None
 
     def __post_init__(self) -> None:
+        if self.expression is None and not self.base_feature:
+            raise ValueError("A flat factor recipe requires a non-empty base feature.")
         allowed = set(ALLOWED_BASE_FEATURES)
         if self.demonstration_only:
             allowed |= DEMONSTRATION_FEATURES
