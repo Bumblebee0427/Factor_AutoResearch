@@ -1,0 +1,42 @@
+\documentclass[11pt]{article}
+\usepackage[letterpaper,margin=0.72in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\pagestyle{empty}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0pt}
+\setlength{\leftmargini}{1.35em}
+\newcommand{\memosection}[1]{\vspace{7pt}\noindent{\normalsize\bfseries #1}\par\vspace{2pt}}
+\newenvironment{memopoints}{\begin{itemize}\setlength{\itemsep}{4pt}\setlength{\parsep}{0pt}\setlength{\topsep}{2pt}}{\end{itemize}}
+\begin{document}
+\begin{center}
+{\large\bfseries Evaluation Methodology --- Autonomous Factor Research Loop}
+\end{center}
+\vspace{-11pt}
+
+\memosection{A. What Counts as Evidence}
+\begin{memopoints}
+\item \textbf{Fixed validation.} I used 2010--2015 for research, with expanding folds 2010--2012 $\rightarrow$ 2013, 2010--2013 $\rightarrow$ 2014, and 2010--2014 $\rightarrow$ 2015. Every candidate used the same deterministic construction and evaluator. I froze the selected library before opening the separate 2016 holdout once.
+\item \textbf{Several tests, one decision.} Evidence includes daily cross-sectional five-day RankIC and its Newey--West t-statistic, one- and ten-day IC, positive-fold consistency, top/bottom 20\% long-short returns, turnover, drawdown, and Sharpe at 10 and 25 bp transaction costs. A Parent needs positive mean IC, at least one positive fold, and turnover $\leq 2.0$. Elite requires mean IC $\geq 0.005$, Newey--West $t \geq 1.0$, positive IC in all three folds, 25 bp Sharpe $\geq 0$, and turnover $\leq 1.5$. No single statistic is sufficient.
+\end{memopoints}
+
+\memosection{B. Why I Trust the Process More Than the Winner}
+\begin{memopoints}
+\item \textbf{Controls against lucky discoveries.} Folds, gates, and candidate budgets were fixed. Canonical-formula deduplication, signal-level Parent clustering, and library redundancy checks limit repeated variants. I did not relax thresholds after seeing results or use 2016 to select a factor.
+\item \textbf{Rejections are evidence.} Six research arms finished; only one candidate cleared every Elite gate. In the 60-candidate adaptive deterministic arm, 31/32 Parents failed high-cost Sharpe and 25/32 failed positive-fold consistency. Three targeted repairs improved the target cost metric but damaged IC, so none counted as a successful repair.
+\item \textbf{Final check.} The frozen factor, \texttt{slow\_attention\_profitability\_spread} (rank of after-tax ROE minus rank of 60-day news volume), had research RankIC 0.0199, Newey--West $t$ 1.079, and 25 bp Sharpe 0.733. In the one-shot 2016 holdout, RankIC was -0.0049 and 25 bp Sharpe was -1.637. It passed the research gates but did not generalize strongly; one holdout year is not a new selection round.
+\end{memopoints}
+
+\memosection{C. Look-Ahead and Data Integrity}
+\begin{memopoints}
+\item \textbf{Availability.} Fundamentals become usable 90 days after fiscal period end; news is delayed one day. Time-series operators use each stock's history, while cross-sectional transforms stay within the current date.
+\item \textbf{Construction firewall.} The LLM proposes only a typed expression, not executable Python. Local schema, feature, operator, window, complexity, and coverage checks precede evaluation. Sampled truncation and future-noise tests require past signals to remain unchanged when future data changes. A deliberately leaky \texttt{future\_return} factor is rejected before its apparent predictiveness can affect selection.
+\end{memopoints}
+
+\memosection{D. What I Would Improve With More Time}
+\begin{memopoints}
+\item Obtain true historical universe membership and actual filing timestamps; calibrate spreads, capacity, and execution costs; develop richer deterministic news features.
+\item Repeat model-role comparisons to measure run-to-run variance and add formal multiple-testing controls. I trust the fixed record of hypotheses, rejections, and repairs more than the highest-Sharpe candidate; the weak 2016 result reinforces that this is a research filter, not proof of alpha.
+\end{memopoints}
+\end{document}

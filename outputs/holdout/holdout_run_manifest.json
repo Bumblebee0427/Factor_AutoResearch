@@ -1,0 +1,15 @@
+{
+  "executed_at_utc": "2026-09-24T16:32:02Z",
+  "command": "python scripts/final_holdout.py",
+  "git_commit": "2cbc802ee3565006c41091b424b900a428941277",
+  "freeze_manifest_sha256": "22b7ca461e347cc32213b189107564eff16ef538b2497d0008b76ea18753b0a8",
+  "factor_library_sha256": "ca0d8d450c78da544518ee8788e19471a459dbb14cba0e6edcecf34f9d324dca",
+  "holdout_results_sha256": "19b5dff6f28fc5665bf0ec05172fc4fdba06dcd30f82ed40466dcba6df8eda34",
+  "source_run_id": "final_gpt6_20260924_v1",
+  "source_arm": "luna_sol",
+  "factor_ids": [
+    "slow_attention_profitability_spread"
+  ],
+  "one_shot_completed": true,
+  "research_modified_after_holdout": false
+}

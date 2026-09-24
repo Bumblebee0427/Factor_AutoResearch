@@ -238,8 +238,9 @@ the four LLM arms each evaluated 60 candidates. The old fixed-generation baselin
 exhausted novel proposals after 33 candidates despite the same 60-candidate cap.
 
 One factor in the Luna-Macro/Sol-Micro arm passed the pre-committed Elite gates and
-entered a research-only candidate library. That library has **not** been frozen and
-the 2016 holdout has **not** been opened. The interrupted final arm was recovered
+entered a research-only candidate library. The library was subsequently frozen and
+the 2016 holdout was evaluated once; see [the final holdout report](docs/final_holdout_results.md).
+The interrupted final arm was recovered
 from its last complete 50-candidate checkpoint; its original partial attempt is
 preserved locally in `luna_sol_aborted_partial/`, with the repair commit recorded
 in the run manifest. Reported API costs include a separate accounting for the

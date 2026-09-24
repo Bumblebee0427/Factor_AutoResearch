@@ -1,0 +1,15 @@
+{
+  "source_run_id": "final_gpt6_20260924_v1",
+  "source_arm": "luna_sol",
+  "source_research_artifact_directory": "artifacts/experiments/final_experiments/final_gpt6_20260924_v1/luna_sol",
+  "source_candidate_library": "artifacts/experiments/final_experiments/final_gpt6_20260924_v1/luna_sol/adaptive/factor_library_candidate.json",
+  "source_selection_audit": "artifacts/experiments/final_experiments/final_gpt6_20260924_v1/luna_sol/adaptive/library_selection_audit.json",
+  "factor_ids": [
+    "slow_attention_profitability_spread"
+  ],
+  "research_only_tier": "ELITE",
+  "research_decision": "PROMOTE",
+  "research_failed_elite_gates": [],
+  "research_formula": "sub(cs_rank(after_tax_roe),cs_rank(news_volume[60]))",
+  "source_arm_status": "complete"
+}

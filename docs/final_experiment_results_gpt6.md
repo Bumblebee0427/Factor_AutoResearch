@@ -236,3 +236,7 @@ Machine summary: `/Users/bumblebee/Documents/Project/Factor_AutoResearch/artifac
 `luna_sol` recovered from 50 committed candidates at round 18; aborted tail archived at `artifacts/experiments/final_experiments/final_gpt6_20260924_v1/luna_sol_aborted_partial`. Original run commit `13bc79740a5922183035670e3c652fe1fe9d6b38`; recovery guard commit `d35b5784cc5b773cf1a5278912d1c11712ae62fa`. The guard changed only malformed deterministic crossover fallback behavior; evaluator, gates and research panel remained fixed.
 
 1 candidate(s) passed all pre-committed Elite gates, and the corresponding research-only candidate library is saved under its arm's `adaptive/` directory. This experiment did not freeze a final library or open the 2016 holdout; the one-shot holdout is a separate post-freeze step.
+
+## Post-research final holdout
+
+The selected research library and its `luna_sol` run configuration were subsequently frozen, and the 2016 holdout was opened exactly once. The detailed result is in [final_holdout_results.md](final_holdout_results.md); the research-period tables above are unchanged.

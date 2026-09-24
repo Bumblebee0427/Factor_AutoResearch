@@ -1,0 +1,68 @@
+[
+  {
+    "factor_id": "slow_attention_profitability_spread",
+    "generation": 14,
+    "parent_ids": [
+      "underfollowed_profitable_firms"
+    ],
+    "family": "news",
+    "hypothesis": "Profitable firms with persistently low news coverage may be underappreciated; comparing profitability and slow-moving coverage directly may produce a steadier signal than multiplying their ranks.",
+    "base_feature": "",
+    "ts_operator": null,
+    "window": null,
+    "cs_operator": null,
+    "interaction_feature": null,
+    "interaction_window": null,
+    "direction": 1,
+    "mutation_reason": "The held underfollowed_profitable_firms factor has positive five-day IC (0.0185) but a low IC t-stat (0.493), while standalone ROE also has positive but weak IC. Replace the four-operator product with a three-operator rank spread and use 60-day news coverage to test persistence.",
+    "demonstration_only": false,
+    "proposal_type": "xalpha_refinement",
+    "evidence_factor_ids": [
+      "underfollowed_profitable_firms",
+      "r5_pivot_fundamental_quality_23"
+    ],
+    "targeted_failure": "low_statistical_significance",
+    "expected_metric_effect": "Higher five-day IC significance and more consistent positive folds than underfollowed_profitable_firms, without worsening turnover or after-cost Sharpe.",
+    "falsification_condition": "Reject if five-day IC significance does not improve, positive-fold consistency deteriorates, or after-cost Sharpe worsens versus underfollowed_profitable_firms.",
+    "mechanism": "NEWS_ATTENTION",
+    "expression": {
+      "kind": "op",
+      "name": "sub",
+      "args": [
+        {
+          "kind": "op",
+          "name": "cs_rank",
+          "args": [
+            {
+              "kind": "feature",
+              "name": "after_tax_roe",
+              "window": null
+            }
+          ],
+          "params": {}
+        },
+        {
+          "kind": "op",
+          "name": "cs_rank",
+          "args": [
+            {
+              "kind": "feature",
+              "name": "news_volume",
+              "window": 60
+            }
+          ],
+          "params": {}
+        }
+      ],
+      "params": {}
+    },
+    "complexity": 3,
+    "canonical_formula": "sub(cs_rank(after_tax_roe),cs_rank(news_volume[60]))",
+    "expression_hash": "45427c27c95cdd98d5eeb45bb22b12977417c06559d3c938b247dedd6f7c9687",
+    "required_features": [
+      "after_tax_roe",
+      "news_volume"
+    ],
+    "required_history": 60
+  }
+]

@@ -1,0 +1,9 @@
+[
+  {
+    "factor_id": "slow_attention_profitability_spread",
+    "selected": true,
+    "correlation": 0.0,
+    "residual_ic": null,
+    "mechanism": "NEWS_ATTENTION"
+  }
+]

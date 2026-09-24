@@ -1,0 +1,159 @@
+{
+  "freeze_manifest": {
+    "frozen_at_utc": "2026-09-24T16:29:50Z",
+    "git_commit": "2cbc802ee3565006c41091b424b900a428941277",
+    "config_sha256": "187825f30af185967580ad98fb27537247e9dbbe8684b3c7e978b719398def85",
+    "random_seed": 42,
+    "factor_count": 1,
+    "factor_ids": [
+      "slow_attention_profitability_spread"
+    ],
+    "holdout_year": 2016,
+    "source_run_id": "final_gpt6_20260924_v1",
+    "source_arm": "luna_sol",
+    "source_candidate_library": "artifacts/experiments/final_experiments/final_gpt6_20260924_v1/luna_sol/adaptive/factor_library_candidate.json",
+    "source_run_config": "artifacts/experiments/final_experiments/final_gpt6_20260924_v1/luna_sol/run_config.json",
+    "source_final_experiment_manifest": "artifacts/experiments/final_experiments/final_gpt6_20260924_v1/manifest.json",
+    "holdout_evaluated_at_freeze": false,
+    "sha256": {
+      "source_candidate_library": "ca0d8d450c78da544518ee8788e19471a459dbb14cba0e6edcecf34f9d324dca",
+      "frozen_factor_library": "ca0d8d450c78da544518ee8788e19471a459dbb14cba0e6edcecf34f9d324dca",
+      "source_run_config": "0da44e2c42d0ee941c396118a2d434d7924ae55e2108ec8b22fd105731d29fc9",
+      "frozen_config": "0da44e2c42d0ee941c396118a2d434d7924ae55e2108ec8b22fd105731d29fc9",
+      "source_library_selection_audit": "32d7ba443bdc2e10d08239f3876e01dfea9af414645b946aa7b9abc28fc143e2",
+      "frozen_library_selection_audit": "32d7ba443bdc2e10d08239f3876e01dfea9af414645b946aa7b9abc28fc143e2",
+      "source_final_experiment_manifest": "23a4cd9117a4520cb5a1b835402c84868fcb09bd8a9bd89b2ff5ad1fb4e19382"
+    }
+  },
+  "factor_results": [
+    {
+      "factor": {
+        "factor_id": "slow_attention_profitability_spread",
+        "generation": 14,
+        "parent_ids": [
+          "underfollowed_profitable_firms"
+        ],
+        "family": "news",
+        "hypothesis": "Profitable firms with persistently low news coverage may be underappreciated; comparing profitability and slow-moving coverage directly may produce a steadier signal than multiplying their ranks.",
+        "base_feature": "",
+        "ts_operator": null,
+        "window": null,
+        "cs_operator": null,
+        "interaction_feature": null,
+        "interaction_window": null,
+        "direction": 1,
+        "mutation_reason": "The held underfollowed_profitable_firms factor has positive five-day IC (0.0185) but a low IC t-stat (0.493), while standalone ROE also has positive but weak IC. Replace the four-operator product with a three-operator rank spread and use 60-day news coverage to test persistence.",
+        "demonstration_only": false,
+        "proposal_type": "xalpha_refinement",
+        "evidence_factor_ids": [
+          "underfollowed_profitable_firms",
+          "r5_pivot_fundamental_quality_23"
+        ],
+        "targeted_failure": "low_statistical_significance",
+        "expected_metric_effect": "Higher five-day IC significance and more consistent positive folds than underfollowed_profitable_firms, without worsening turnover or after-cost Sharpe.",
+        "falsification_condition": "Reject if five-day IC significance does not improve, positive-fold consistency deteriorates, or after-cost Sharpe worsens versus underfollowed_profitable_firms.",
+        "mechanism": "NEWS_ATTENTION",
+        "expression": {
+          "kind": "op",
+          "name": "sub",
+          "args": [
+            {
+              "kind": "op",
+              "name": "cs_rank",
+              "args": [
+                {
+                  "kind": "feature",
+                  "name": "after_tax_roe",
+                  "window": null
+                }
+              ],
+              "params": {}
+            },
+            {
+              "kind": "op",
+              "name": "cs_rank",
+              "args": [
+                {
+                  "kind": "feature",
+                  "name": "news_volume",
+                  "window": 60
+                }
+              ],
+              "params": {}
+            }
+          ],
+          "params": {}
+        },
+        "complexity": 3,
+        "canonical_formula": "sub(cs_rank(after_tax_roe),cs_rank(news_volume[60]))",
+        "expression_hash": "45427c27c95cdd98d5eeb45bb22b12977417c06559d3c938b247dedd6f7c9687",
+        "required_features": [
+          "after_tax_roe",
+          "news_volume"
+        ],
+        "required_history": 60
+      },
+      "metrics": {
+        "mean_ic": -0.004874214007946372,
+        "mean_ic_tstat": -0.686274599872232,
+        "mean_net_sharpe": -1.3168482033098519,
+        "mean_high_cost_sharpe": -1.6374261385943136,
+        "mean_turnover": 0.02155477390431673,
+        "worst_drawdown": -0.04999583104107819,
+        "positive_ic_folds": 0,
+        "multi_horizon_mean_ic": {
+          "1d": -0.0010455540557250031,
+          "5d": -0.004874214007946372,
+          "10d": -0.01102665917080189
+        },
+        "fold_ic_sign_consistency": 1.0,
+        "folds": [
+          {
+            "fold": "final_holdout_2016",
+            "mean_ic": -0.004874214007946372,
+            "ic_volatility": 0.061979785235644826,
+            "ic_ir": -0.0786419957638574,
+            "ic_tstat": -0.686274599872232,
+            "naive_ic_tstat": -1.2359559797733386,
+            "newey_west_lags": 4,
+            "ic_hit_rate": 0.4777327935222672,
+            "multi_horizon_ic": {
+              "1d": {
+                "mean_ic": -0.0010455540557250031,
+                "newey_west_tstat": -0.26390748221837956,
+                "naive_tstat": -0.2530584100702341,
+                "hit_rate": 0.5179282868525896,
+                "observations": 251,
+                "newey_west_lags": 4
+              },
+              "5d": {
+                "mean_ic": -0.004874214007946372,
+                "newey_west_tstat": -0.686274599872232,
+                "naive_tstat": -1.2359559797733386,
+                "hit_rate": 0.4777327935222672,
+                "observations": 247,
+                "newey_west_lags": 4
+              },
+              "10d": {
+                "mean_ic": -0.01102665917080189,
+                "newey_west_tstat": -1.0072791505217096,
+                "naive_tstat": -2.630271351282044,
+                "hit_rate": 0.4214876033057851,
+                "observations": 242,
+                "newey_west_lags": 9
+              }
+            },
+            "annualized_return": -0.03331164804192515,
+            "net_sharpe": -1.3168482033098519,
+            "high_cost_sharpe": -1.6374261385943136,
+            "max_drawdown": -0.04999583104107819,
+            "turnover": 0.02155477390431673,
+            "return_per_turnover": -1.5454417749774632,
+            "quantile_monotonicity": -0.7,
+            "stock_day_observations": 109999
+          }
+        ]
+      }
+    }
+  ]
+}

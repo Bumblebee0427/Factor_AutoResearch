@@ -1,0 +1,189 @@
+{
+  "adaptive_research": {
+    "budgets": {
+      "combine": 3,
+      "improve": 4,
+      "pivot": 6
+    },
+    "combine_max_parent_correlation": 0.5,
+    "dynamic_leakage_cutoffs": 2,
+    "dynamic_leakage_enabled": true,
+    "dynamic_leakage_sample_tickers": 4,
+    "elite_archive_size": 12,
+    "elite_max_turnover": 1.5,
+    "elite_min_high_cost_sharpe": 0.0,
+    "elite_min_mean_ic": 0.005,
+    "elite_min_positive_folds": 3,
+    "elite_min_tstat": 1.0,
+    "final_correlation_threshold": 0.7,
+    "max_candidate_evaluations": 60,
+    "max_final_factors": 8,
+    "max_group_reproposals_per_round": 2,
+    "max_rounds": 24,
+    "min_candidates_per_mechanism": 2,
+    "min_incremental_ic": 0.001,
+    "minimum_evidence_before_stop": 60,
+    "minimum_mechanisms_before_stop": 8,
+    "parent_cluster_correlation": 0.9,
+    "parent_cluster_max_dates": 96,
+    "parent_cluster_min_dates": 20,
+    "parent_cluster_min_names": 5,
+    "parent_max_turnover": 2.0,
+    "parent_min_mean_ic": 0.0,
+    "parent_min_positive_folds": 1,
+    "parent_pool_size": 20,
+    "pivot_failure_threshold": 3,
+    "saturation_max_cluster_ratio": 0.4,
+    "saturation_min_parent_candidates": 6,
+    "stop_rounds_without_improvement": 2
+  },
+  "data": {
+    "audit_only_news_file": "raw_analyst_ratings.csv",
+    "fundamental_reporting_lag_days": 90,
+    "fundamentals_file": "fundamentals.csv",
+    "news_availability_lag_days": 1,
+    "news_chunksize": 250000,
+    "news_files": [
+      "analyst_ratings_processed.csv",
+      "raw_partner_headlines.csv"
+    ],
+    "prices_file": "prices-split-adjusted.csv",
+    "securities_file": "securities.csv",
+    "signal_cutoff_time": "16:00:00",
+    "unadjusted_prices_file": "prices.csv"
+  },
+  "dsl": {
+    "allowed_feature_windows": [
+      1,
+      5,
+      10,
+      20,
+      60
+    ],
+    "allowed_groups": [
+      "sector",
+      "subindustry"
+    ],
+    "enabled": true,
+    "max_ast_depth": 5,
+    "max_binary_nodes": 2,
+    "max_group_nodes": 2,
+    "max_operator_nodes": 6,
+    "max_rolling_nodes": 3,
+    "min_group_size": 5,
+    "safe_div_epsilon": 1e-12
+  },
+  "evaluation": {
+    "annualization_days": 252,
+    "high_cost_bps": 25.0,
+    "ic_horizons_days": [
+      1,
+      5,
+      10
+    ],
+    "newey_west_lags": "auto",
+    "portfolio_horizon_days": 1,
+    "portfolio_quantile": 0.2,
+    "prediction_horizon_days": 5,
+    "quantile_count": 5,
+    "transaction_cost_bps": 10.0
+  },
+  "gates": {
+    "max_complexity": 4,
+    "max_daily_turnover": 1.5,
+    "max_fold_drawdown": -0.3,
+    "min_high_cost_sharpe": 0.0,
+    "min_ic_tstat": 1.0,
+    "min_incremental_ic": 0.001,
+    "min_mean_ic": 0.0,
+    "min_net_sharpe": 0.0,
+    "min_positive_ic_folds": 2,
+    "minimum_factor_coverage": 0.2,
+    "redundancy_correlation": 0.85
+  },
+  "llm": {
+    "allowed_windows": [
+      1,
+      5,
+      10,
+      20,
+      60
+    ],
+    "api_key_env": "OPENAI_API_KEY",
+    "enabled": true,
+    "endpoint": "responses",
+    "macro": {
+      "model": "gpt-6-luna",
+      "reasoning_effort": "high"
+    },
+    "max_history_records": 20,
+    "max_output_tokens": 6000,
+    "max_proposals_per_generation": 6,
+    "micro": {
+      "model": "gpt-6-sol",
+      "reasoning_effort": "high"
+    },
+    "model": "gpt-6-luna",
+    "model_env": "OPENAI_FACTOR_MODEL",
+    "prompt_cache_key": "factor-autoresearch-gpt6-high-v1",
+    "provider": "openai",
+    "reasoning_effort": "high",
+    "reasoning_mode": "standard",
+    "required": true,
+    "store": false,
+    "verbosity": "low"
+  },
+  "paths": {
+    "experiment_dir": "/Users/bumblebee/Documents/Project/Factor_AutoResearch/artifacts/experiments/final_experiments/final_gpt6_20260924_v1/luna_sol",
+    "freeze_dir": "artifacts/frozen",
+    "holdout_panel_file": "holdout_2016.parquet",
+    "output_dir": "outputs",
+    "processed_data_dir": "artifacts/processed",
+    "raw_data_dir": "data",
+    "research_panel_file": "research_2010_2015.parquet"
+  },
+  "project": {
+    "name": "Factor_AutoResearch",
+    "random_seed": 42
+  },
+  "search": {
+    "generations": 4,
+    "max_candidates": 200,
+    "max_llm_proposals_per_parent": 3,
+    "max_mutations_per_parent": 3
+  },
+  "universe": {
+    "end_date": "2016-12-31",
+    "minimum_history_days": 60,
+    "minimum_price": 5.0,
+    "require_security_master_match": true,
+    "start_date": "2010-01-01"
+  },
+  "walk_forward": {
+    "folds": [
+      {
+        "name": "validate_2013",
+        "train_end": "2012-12-31",
+        "train_start": "2010-01-01",
+        "validation_end": "2013-12-31",
+        "validation_start": "2013-01-01"
+      },
+      {
+        "name": "validate_2014",
+        "train_end": "2013-12-31",
+        "train_start": "2010-01-01",
+        "validation_end": "2014-12-31",
+        "validation_start": "2014-01-01"
+      },
+      {
+        "name": "validate_2015",
+        "train_end": "2014-12-31",
+        "train_start": "2010-01-01",
+        "validation_end": "2015-12-31",
+        "validation_start": "2015-01-01"
+      }
+    ],
+    "holdout_year": 2016,
+    "research_end_year": 2015
+  }
+}

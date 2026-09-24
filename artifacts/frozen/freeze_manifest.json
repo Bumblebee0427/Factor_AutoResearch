@@ -1,0 +1,26 @@
+{
+  "frozen_at_utc": "2026-09-24T16:29:50Z",
+  "git_commit": "2cbc802ee3565006c41091b424b900a428941277",
+  "config_sha256": "187825f30af185967580ad98fb27537247e9dbbe8684b3c7e978b719398def85",
+  "random_seed": 42,
+  "factor_count": 1,
+  "factor_ids": [
+    "slow_attention_profitability_spread"
+  ],
+  "holdout_year": 2016,
+  "source_run_id": "final_gpt6_20260924_v1",
+  "source_arm": "luna_sol",
+  "source_candidate_library": "artifacts/experiments/final_experiments/final_gpt6_20260924_v1/luna_sol/adaptive/factor_library_candidate.json",
+  "source_run_config": "artifacts/experiments/final_experiments/final_gpt6_20260924_v1/luna_sol/run_config.json",
+  "source_final_experiment_manifest": "artifacts/experiments/final_experiments/final_gpt6_20260924_v1/manifest.json",
+  "holdout_evaluated_at_freeze": false,
+  "sha256": {
+    "source_candidate_library": "ca0d8d450c78da544518ee8788e19471a459dbb14cba0e6edcecf34f9d324dca",
+    "frozen_factor_library": "ca0d8d450c78da544518ee8788e19471a459dbb14cba0e6edcecf34f9d324dca",
+    "source_run_config": "0da44e2c42d0ee941c396118a2d434d7924ae55e2108ec8b22fd105731d29fc9",
+    "frozen_config": "0da44e2c42d0ee941c396118a2d434d7924ae55e2108ec8b22fd105731d29fc9",
+    "source_library_selection_audit": "32d7ba443bdc2e10d08239f3876e01dfea9af414645b946aa7b9abc28fc143e2",
+    "frozen_library_selection_audit": "32d7ba443bdc2e10d08239f3876e01dfea9af414645b946aa7b9abc28fc143e2",
+    "source_final_experiment_manifest": "23a4cd9117a4520cb5a1b835402c84868fcb09bd8a9bd89b2ff5ad1fb4e19382"
+  }
+}
