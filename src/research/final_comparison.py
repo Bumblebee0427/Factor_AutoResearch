@@ -245,6 +245,11 @@ def lineage_case(row: dict) -> dict:
         "high_cost_sharpe": row["high_cost_sharpe"],
         "turnover": row["turnover"],
         "failed_elite_gates": row["diagnostic"]["failed_gates"],
+        "fold_mean_ics": {
+            fold.get("fold", fold.get("fold_name", f"fold_{index}")): fold.get("mean_ic")
+            for index, fold in enumerate(row["record"].get("fold_metrics", []), 1)
+        },
+        "multi_horizon_mean_ic": row["record"].get("multi_horizon_mean_ic", {}),
         "tier": row["tier"],
     }
 
@@ -252,11 +257,13 @@ def lineage_case(row: dict) -> dict:
 def choose_cases(arms: dict, pairs: list[dict]) -> dict:
     all_rows = [row for arm in arms.values() for row in arm["rows"]]
     parents = [row for row in all_rows if row["tier"] in {"PARENT", "ELITE"}]
+    elites = [row for row in all_rows if row["tier"] == "ELITE"]
     successful_parent = parents[0] if parents else None
     near_elite = next((row for row in parents if row["failed_elite_gate_count"] == 1), None)
     repair_pair = pairs[0] if pairs else None
     child = next((row for row in all_rows if repair_pair and row["arm"] == repair_pair["arm"] and row["factor_id"] == repair_pair["child_factor_id"]), None)
     return {
+        "elite": lineage_case(elites[0]) if elites else None,
         "successful_parent": lineage_case(successful_parent) if successful_parent else None,
         "near_elite": lineage_case(near_elite) if near_elite else None,
         "targeted_repair": {"child": lineage_case(child), "paired_metrics": repair_pair} if child else None,
@@ -295,6 +302,37 @@ def analyze(manifest: dict, root: Path, pricing: dict) -> dict:
                 counter.update(failed)
     by_mechanism = [{"arm": key.split("|")[0], "mechanism": key.split("|")[1], "parents": count["parents"], **{f"failed_{gate}": count[gate] for gate in GATES}} for key, count in sorted(mechanism_counter.items())]
     by_name = {row["arm"]: row for row in summaries}
+    overhead = []
+    smoke_path = root / "smoke_checks.json"
+    if smoke_path.exists():
+        for item in json.loads(smoke_path.read_text(encoding="utf-8"))["checks"]:
+            usage = {
+                "input_tokens": item["input_tokens"],
+                "output_tokens": item["output_tokens"],
+                "cached_input_tokens": item["cached_input_tokens"],
+                "cache_write_tokens": item["cache_write_tokens"],
+            }
+            overhead.append({"source": "model_smoke_check", "model": item["model"], "calls": 1,
+                             "total_tokens": item["total_tokens"], "estimated_cost_usd": estimate_cost(usage, item["model"], pricing),
+                             "unmeasured_attempts": 0})
+    for name, entry in manifest["arms"].items():
+        if not entry.get("aborted_partial_archive"):
+            continue
+        archive = root / Path(entry["aborted_partial_archive"]).name
+        extra_events = read_jsonl(archive / "adaptive" / "llm_events.jsonl")[entry["recovered_from_round"]:]
+        assignment = ROLE_ASSIGNMENTS[name]
+        for role, model_key in zip(("macro", "micro"), assignment):
+            usage = role_usage(extra_events, role)
+            model = manifest["model_ids"][model_key]
+            overhead.append({"source": f"aborted_{name}_{role}", "model": model,
+                             "calls": usage["llm_calls"], "total_tokens": usage["total_tokens"],
+                             "estimated_cost_usd": estimate_cost(usage, model, pricing),
+                             "unmeasured_attempts": sum(
+                                 bool(event.get(role, {}).get("reason"))
+                                 and event[role].get("reason") not in {"deterministic_controller", "deterministic_mechanism_coverage"}
+                                 and not event[role].get("response_id")
+                                 for event in extra_events
+                             )})
     architecture = [by_name[name] for name in ("fixed_deterministic", "adaptive_deterministic") if name in by_name]
     agent = [by_name[name] for name in ("adaptive_deterministic", "luna_luna") if name in by_name]
     model = [by_name[name] for name in ROLE_ASSIGNMENTS if name in by_name]
@@ -307,6 +345,7 @@ def analyze(manifest: dict, root: Path, pricing: dict) -> dict:
         "model_role_comparison": model,
         "model_token_usage": token_rows,
         "model_cost_comparison": cost_rows,
+        "api_overhead": overhead,
         "macro_role_metrics": macro_rows,
         "micro_role_metrics": micro_rows,
         "elite_gate_failures": gate_rows,
@@ -332,6 +371,9 @@ def analyze(manifest: dict, root: Path, pricing: dict) -> dict:
             for name in arms
         },
         "token_usage": token_rows, "costs": cost_rows,
+        "api_overhead": overhead,
+        "known_total_api_cost_usd": sum(row["total_estimated_cost_usd"] or 0 for row in cost_rows)
+        + sum(row["estimated_cost_usd"] or 0 for row in overhead),
         "cases": choose_cases(arms, pairs),
         "table_files": {name: str((table_dir / f"{name}.csv").relative_to(root)) for name in tables},
     }

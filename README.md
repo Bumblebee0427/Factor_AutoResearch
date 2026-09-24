@@ -225,3 +225,23 @@ This is deliberately not a full reproduction of XALPHA. V1 does not ingest paper
 time, implement the complete archetype taxonomy, generate arbitrary executable code, or use
 a multi-agent swarm. Those features would weaken auditability relative to this take-home's
 small dataset and hard final-holdout policy.
+
+## Final GPT-6 experiment (2026-09-24)
+
+The six-arm, research-only comparison is summarized in
+[`docs/final_experiment_results_gpt6.md`](docs/final_experiment_results_gpt6.md).
+Its local audit trail is under
+`artifacts/experiments/final_experiments/final_gpt6_20260924_v1/`: the manifest,
+per-arm configurations, candidate and round trajectories, role-specific API usage,
+12+ comparison tables, and five figures. GPT-6 Luna and Sol both used High reasoning;
+the four LLM arms each evaluated 60 candidates. The old fixed-generation baseline
+exhausted novel proposals after 33 candidates despite the same 60-candidate cap.
+
+One factor in the Luna-Macro/Sol-Micro arm passed the pre-committed Elite gates and
+entered a research-only candidate library. That library has **not** been frozen and
+the 2016 holdout has **not** been opened. The interrupted final arm was recovered
+from its last complete 50-candidate checkpoint; its original partial attempt is
+preserved locally in `luna_sol_aborted_partial/`, with the repair commit recorded
+in the run manifest. Reported API costs include a separate accounting for the
+recorded smoke checks and aborted Micro call; an unmeasured aborted Macro attempt
+makes the known total a lower-bound estimate.

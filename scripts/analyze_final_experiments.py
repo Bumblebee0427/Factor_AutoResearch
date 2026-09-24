@@ -132,6 +132,9 @@ def render_report(result: dict, manifest: dict, figure_names: list[str], root: P
     lines += markdown_table([by_name[name] for name in ("fixed_deterministic", "adaptive_deterministic") if name in by_name], [("arm", "Arm"), ("candidate_count", "N"), ("median_mean_rank_ic", "Median IC"), ("median_high_cost_sharpe", "Median high-cost Sharpe"), ("parent_count", "Common Parents"), ("elite_count", "Common Elites"), ("unique_parent_clusters", "Unique clusters"), ("unique_parent_clusters_per_10_candidates", "Clusters / 10"), ("valid_information_per_10_candidates", "Valid / 10"), ("duplicate_formula_rate", "Duplicate rate"), ("invalid_proposal_rate", "Invalid rate")])
     lines += ["", "Both arms had a 60-candidate cap, but the fixed generator exhausted novel proposals after 33 evaluated candidates. Counts therefore have unequal denominators; per-10 rates are shown, but this single run does not isolate architecture from proposal coverage. The fixed-generation arm is classified post hoc using the current Parent/Elite gates; its original search decisions are preserved.", "", "## C · Deterministic vs Luna High", ""]
     lines += markdown_table([by_name[name] for name in ("adaptive_deterministic", "luna_luna") if name in by_name], [("arm", "Arm"), ("candidate_count", "N"), ("first_parent_index", "First Parent"), ("first_elite_index", "First Elite"), ("unique_parent_clusters", "Unique clusters"), ("median_mean_rank_ic", "Median IC"), ("median_high_cost_sharpe", "Median high-cost Sharpe"), ("raw_llm_proposal_rejection_rate", "Raw proposal rejection")])
+    if "adaptive_deterministic" in by_name and "luna_luna" in by_name:
+        deterministic, luna = by_name["adaptive_deterministic"], by_name["luna_luna"]
+        lines += ["", f"At equal 60-candidate budgets, Luna/Luna produced {luna['unique_parent_clusters']} unique Parent clusters versus {deterministic['unique_parent_clusters']} for the adaptive deterministic policy. Its median IC was {cell(luna['median_mean_rank_ic'])} versus {cell(deterministic['median_mean_rank_ic'])}; this run does not show a Luna/Luna search-efficiency gain by those criteria."]
     lines += ["", "## D · Model roles, tokens and cost", ""]
     model_summaries = [by_name[name] for name in ("luna_luna", "sol_sol", "sol_luna", "luna_sol") if name in by_name]
     cost_map = {row["arm"]: row for row in result["costs"]}
@@ -139,7 +142,13 @@ def render_report(result: dict, manifest: dict, figure_names: list[str], root: P
     comparison = [{**row, **cost_map[row["arm"]], **usage_map[row["arm"]]} for row in model_summaries]
     lines += markdown_table(comparison, [("arm", "Arm"), ("macro_model_id", "Macro model"), ("micro_model_id", "Micro model"), ("combined_total_tokens", "Total tokens"), ("total_estimated_cost_usd", "Est. USD"), ("unique_parent_clusters", "Unique clusters"), ("unique_parent_clusters_per_100k_tokens", "Clusters / 100k tokens"), ("median_mean_rank_ic", "Median IC")])
     source_urls = manifest["pricing_source_urls"]
-    lines += ["", f"Pricing as of {result['pricing_as_of']} from [Luna]({source_urls['luna']}) and [Sol]({source_urls['sol']}) model pages. Costs are estimates from recorded input, cache-read, cache-write and output tokens, not invoice amounts.", "", "## Repair evidence", ""]
+    lines += ["", f"Pricing as of {result['pricing_as_of']} from [Luna]({source_urls['luna']}) and [Sol]({source_urls['sol']}) model pages. Costs are estimates from recorded input, cache-read, cache-write and output tokens, not invoice amounts.", "", "### Search yield and robustness by model role", ""]
+    lines += markdown_table(model_summaries, [("arm", "Arm"), ("first_elite_index", "First Elite"), ("parent_count", "Parents"), ("unique_parent_clusters", "Clusters"), ("elite_count", "Elites"), ("valid_information_per_10_candidates", "Valid / 10"), ("invalid_proposal_rate", "Invalid evaluated"), ("raw_llm_proposal_rejection_rate", "Raw rejection"), ("median_high_cost_sharpe", "Median high-cost Sharpe")])
+    if all(name in by_name for name in ("luna_luna", "sol_sol", "sol_luna", "luna_sol")):
+        lines += ["", f"With Sol in Micro, the two assignments found {by_name['sol_sol']['unique_parent_clusters']} and {by_name['luna_sol']['unique_parent_clusters']} independent Parent clusters; with Luna in Micro, they found {by_name['sol_luna']['unique_parent_clusters']} and {by_name['luna_luna']['unique_parent_clusters']}. In this single run, spending on Micro appears more associated with cluster yield than spending on Macro. The only Elite appeared at candidate {by_name['luna_sol']['first_elite_index']} in Luna Macro/Sol Micro. This is an observed allocation pattern, not a causal or statistically powered estimate."]
+    lines += ["", "### API usage outside completed arm trajectories", ""]
+    lines += markdown_table(result["api_overhead"], [("source", "Source"), ("model", "Model"), ("calls", "Recorded calls"), ("total_tokens", "Tokens"), ("estimated_cost_usd", "Est. USD"), ("unmeasured_attempts", "Unmeasured attempts")])
+    lines += ["", f"Known API cost including the recorded smoke checks and aborted-attempt usage: ${result['known_total_api_cost_usd']:.3f}. A model attempt without a response/usage record may have incurred additional charges; this is a lower-bound estimate.", "", "## Repair evidence", ""]
     lines += markdown_table(result["repairs"], [("arm", "Arm"), ("parent_factor_id", "Parent"), ("child_factor_id", "Child"), ("targeted_failure", "Target"), ("delta_mean_rank_ic", "Δ IC"), ("delta_high_cost_sharpe", "Δ high-cost Sharpe"), ("target_improved", "Target improved"), ("collateral_damage", "Collateral damage"), ("repair_succeeded", "Repair succeeded")])
     if "adaptive_deterministic" in by_name:
         gate_counts = result["elite_gate_counts"]["adaptive_deterministic"]
@@ -147,7 +156,7 @@ def render_report(result: dict, manifest: dict, figure_names: list[str], root: P
         repair_pairs = [row for row in result["repairs"] if row["arm"] == "adaptive_deterministic"]
         improved = sum(row["target_improved"] is True for row in repair_pairs)
         collateral = sum(row["collateral_damage"] is True for row in repair_pairs)
-        lines += ["", f"The main Elite bottleneck was high-cost Sharpe: {failed_cost}/{gate_counts['parent_count']} common Parents failed that gate. Targeted repairs improved their intended metric in {improved}/{len(repair_pairs)} paired attempts, but {collateral}/{len(repair_pairs)} caused collateral damage. No candidate passed every Elite gate. The post-feedback cohort's median IC increased slightly, while its median high-cost Sharpe and all-positive-fold rate worsened, so iteration did not establish a broad quality improvement.", ""]
+        lines += ["", f"For the adaptive deterministic arm, the main Elite bottleneck was high-cost Sharpe: {failed_cost}/{gate_counts['parent_count']} common Parents failed that gate. Targeted repairs improved their intended metric in {improved}/{len(repair_pairs)} paired attempts, but {collateral}/{len(repair_pairs)} caused collateral damage. That arm had no Elite. Its post-feedback cohort's median IC increased slightly, while its median high-cost Sharpe and all-positive-fold rate worsened, so iteration did not establish a broad quality improvement.", ""]
     lines += ["", "## Representative lineages", ""]
     for label, item in result["cases"].items():
         if item is None:
@@ -155,12 +164,22 @@ def render_report(result: dict, manifest: dict, figure_names: list[str], root: P
             continue
         case = item.get("child", item)
         lines += [f"### {label.replace('_', ' ').title()}", "", f"Factor: `{case['factor_id']}` ({case['arm']}); tier: {case['tier']}; action: {cell(case['action'])}.", "", f"Hypothesis: {cell(case['hypothesis'])}", "", f"Formula: `{case['canonical_formula']}`; parents: {', '.join(case['parent_ids']) or 'none'}.", "", f"IC {cell(case['mean_rank_ic'])}; NW t {cell(case['newey_west_tstat'])}; positive folds {cell(case['positive_fold_count'])}; high-cost Sharpe {cell(case['high_cost_sharpe'])}; turnover {cell(case['turnover'])}; failed gates {', '.join(case['failed_elite_gates']) or 'none'}.", ""]
+        if case["tier"] == "ELITE":
+            lines += [f"Validation-fold ICs: {', '.join(f'{name}={cell(value)}' for name, value in case['fold_mean_ics'].items())}. Multi-horizon ICs: {', '.join(f'{name}={cell(value)}' for name, value in case['multi_horizon_mean_ic'].items())}. The NW t-stat is only slightly above the pre-committed threshold; this remains a research candidate, not established out-of-sample alpha.", ""]
         if item.get("paired_metrics"):
             pair = item["paired_metrics"]
             lines += [f"Repair target: {cell(pair['targeted_failure'])}; target improved: {cell(pair['target_improved'])}; collateral damage: {cell(pair['collateral_damage'])}; success: {cell(pair['repair_succeeded'])}.", ""]
     lines += ["## Figures", ""]
     lines.extend(f"- `{path}`" for path in figure_names)
-    lines += ["", "## Audit trail", "", f"Manifest: `{root / 'manifest.json'}`", f"Tables: `{root / 'tables'}`", f"Machine summary: `{root / 'final_experiment_summary.json'}`", "", "The 2016 holdout remained unopened. An empty Elite archive does not create a final library.", ""]
+    lines += ["", "## Audit trail", "", f"Manifest: `{root / 'manifest.json'}`", f"Tables: `{root / 'tables'}`", f"Machine summary: `{root / 'final_experiment_summary.json'}`", ""]
+    for name, entry in manifest["arms"].items():
+        if entry.get("recovered_from_round") is not None:
+            lines += [f"`{name}` recovered from {entry['recovered_committed_candidates']} committed candidates at round {entry['recovered_from_round']}; aborted tail archived at `{entry['aborted_partial_archive']}`. Original run commit `{manifest['git_commit_sha']}`; recovery guard commit `{entry['repair_git_commit_sha']}`. The guard changed only malformed deterministic crossover fallback behavior; evaluator, gates and research panel remained fixed.", ""]
+    total_elites = sum(row["elite_count"] for row in result["summaries"])
+    if total_elites:
+        lines += [f"{total_elites} candidate(s) passed all pre-committed Elite gates, and the corresponding research-only candidate library is saved under its arm's `adaptive/` directory. This experiment did not freeze a final library or open the 2016 holdout; the one-shot holdout is a separate post-freeze step.", ""]
+    else:
+        lines += ["No candidate passed all Elite gates. The 2016 holdout remained unopened.", ""]
     return "\n".join(lines)
 
 
