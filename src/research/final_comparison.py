@@ -163,7 +163,7 @@ def role_metrics(arm: dict, pricing: dict, model_ids: dict) -> tuple[dict, dict,
     for role, usage in (("macro", macro), ("micro", micro), ("combined", combined)):
         if role != "combined":
             token_row[f"{role}_llm_calls"] = usage["llm_calls"]
-        for key in ("input_tokens", "output_tokens", "total_tokens", "cached_input_tokens"):
+        for key in ("input_tokens", "output_tokens", "total_tokens", "cached_input_tokens", "cache_write_tokens"):
             token_row[f"{role}_{key}"] = usage[key]
     cost_row = {"arm": arm["name"], "macro_estimated_cost_usd": macro_cost, "micro_estimated_cost_usd": micro_cost, "total_estimated_cost_usd": cost}
     return token_row, cost_row, {"macro": macro, "micro": micro, "combined": combined, "cost": cost}

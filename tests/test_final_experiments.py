@@ -47,6 +47,12 @@ def test_role_tokens_cached_tokens_and_explicit_prices():
     missing_cache = role_usage([{"macro": {"response_id": "m2", "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}}}], "macro")
     assert missing_cache["cached_input_tokens"] is None
     assert estimate_cost(missing_cache, "model", pricing) is None
+    write_events = [{"macro": {"response_id": "m3", "usage": {"input_tokens": 1000, "output_tokens": 200, "total_tokens": 1200, "input_tokens_details": {"cached_tokens": 100, "cache_write_tokens": 600}}}}]
+    write_usage = role_usage(write_events, "macro")
+    assert write_usage["cache_write_tokens"] == 600
+    write_pricing = {"models": {"model": {"input_per_million_usd": 2, "cached_input_per_million_usd": .2, "cache_write_per_million_usd": 2.5, "output_per_million_usd": 10}}}
+    assert estimate_cost(write_usage, "model", write_pricing) == pytest.approx((300 * 2 + 100 * .2 + 600 * 2.5 + 200 * 10) / 1_000_000)
+    assert estimate_cost(missing_cache, "model", write_pricing) is None
 
 
 def test_gpt6_model_ids_and_standard_price_card():
@@ -59,11 +65,13 @@ def test_gpt6_model_ids_and_standard_price_card():
     assert pricing["models"]["gpt-6-luna"] == {
         "input_per_million_usd": 0.10,
         "cached_input_per_million_usd": 0.01,
+        "cache_write_per_million_usd": 0.125,
         "output_per_million_usd": 0.50,
     }
     assert pricing["models"]["gpt-6-sol"] == {
         "input_per_million_usd": 2.00,
         "cached_input_per_million_usd": 0.20,
+        "cache_write_per_million_usd": 2.50,
         "output_per_million_usd": 10.00,
     }
 

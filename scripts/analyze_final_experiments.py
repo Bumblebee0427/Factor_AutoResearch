@@ -139,7 +139,7 @@ def render_report(result: dict, manifest: dict, figure_names: list[str], root: P
     comparison = [{**row, **cost_map[row["arm"]], **usage_map[row["arm"]]} for row in model_summaries]
     lines += markdown_table(comparison, [("arm", "Arm"), ("macro_model_id", "Macro model"), ("micro_model_id", "Micro model"), ("combined_total_tokens", "Total tokens"), ("total_estimated_cost_usd", "Est. USD"), ("unique_parent_clusters", "Unique clusters"), ("unique_parent_clusters_per_100k_tokens", "Clusters / 100k tokens"), ("median_mean_rank_ic", "Median IC")])
     source_urls = manifest["pricing_source_urls"]
-    lines += ["", f"Pricing as of {result['pricing_as_of']} from [Luna]({source_urls['luna']}) and [Sol]({source_urls['sol']}) model pages. Costs are estimates from recorded token usage, not invoice amounts; cache-write premiums are not separately measured.", "", "## Repair evidence", ""]
+    lines += ["", f"Pricing as of {result['pricing_as_of']} from [Luna]({source_urls['luna']}) and [Sol]({source_urls['sol']}) model pages. Costs are estimates from recorded input, cache-read, cache-write and output tokens, not invoice amounts.", "", "## Repair evidence", ""]
     lines += markdown_table(result["repairs"], [("arm", "Arm"), ("parent_factor_id", "Parent"), ("child_factor_id", "Child"), ("targeted_failure", "Target"), ("delta_mean_rank_ic", "Δ IC"), ("delta_high_cost_sharpe", "Δ high-cost Sharpe"), ("target_improved", "Target improved"), ("collateral_damage", "Collateral damage"), ("repair_succeeded", "Repair succeeded")])
     if "adaptive_deterministic" in by_name:
         gate_counts = result["elite_gate_counts"]["adaptive_deterministic"]
