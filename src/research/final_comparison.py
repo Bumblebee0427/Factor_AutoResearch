@@ -324,6 +324,13 @@ def analyze(manifest: dict, root: Path, pricing: dict) -> dict:
         "incomplete_arms": [name for name in ROLE_ASSIGNMENTS if name not in arms],
         "single_run_comparison_caveat": "Model comparisons are descriptive single-budget research runs, not statistically powered estimates of expected performance.",
         "summaries": summaries, "cohorts": cohorts, "repairs": pairs,
+        "elite_gate_counts": {
+            name: {
+                "parent_count": sum(row["arm"] == name and row["tier"] == "PARENT" for row in gate_rows),
+                **{gate: sum(row["arm"] == name and row["tier"] == "PARENT" and row[f"failed_{gate}"] for row in gate_rows) for gate in GATES},
+            }
+            for name in arms
+        },
         "token_usage": token_rows, "costs": cost_rows,
         "cases": choose_cases(arms, pairs),
         "table_files": {name: str((table_dir / f"{name}.csv").relative_to(root)) for name in tables},

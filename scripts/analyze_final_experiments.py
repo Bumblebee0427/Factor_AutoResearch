@@ -70,7 +70,8 @@ def write_figures(result: dict, root: Path) -> list[str]:
     if len(architecture) == 2:
         plt.figure(figsize=(6, 4))
         plt.bar(["Fixed generation", "Macro/Micro/Cross"], [row["unique_parent_clusters"] for row in architecture], color=["#7389ab", "#2a7498"])
-        plt.ylabel("Unique Parent clusters / 60 candidates")
+        plt.ylabel("Unique Parent clusters")
+        plt.xlabel("Evaluated candidates: " + " / ".join(str(row["candidate_count"]) for row in architecture))
         plt.title("Figure 2 · Architecture comparison")
         save("figure2_architecture.png")
 
@@ -78,7 +79,7 @@ def write_figures(result: dict, root: Path) -> list[str]:
     if len(agent) == 2:
         plt.figure(figsize=(6, 4))
         plt.bar(["Deterministic", "Luna High"], [row["unique_parent_clusters"] for row in agent], color=["#7389ab", "#2a7498"])
-        plt.ylabel("Unique Parent clusters / 60 candidates")
+        plt.ylabel("Unique Parent clusters (60-candidate cap)")
         plt.title("Figure 3 · Adaptive agent comparison")
         save("figure3_agent_comparison.png")
 
@@ -112,6 +113,8 @@ def write_figures(result: dict, root: Path) -> list[str]:
 
 def render_report(result: dict, manifest: dict, figure_names: list[str], root: Path) -> str:
     by_name = {row["arm"]: row for row in result["summaries"]}
+    expected_arms = ("fixed_deterministic", "adaptive_deterministic", "luna_luna", "sol_sol", "sol_luna", "luna_sol")
+    missing_llm = any(name not in by_name for name in expected_arms[2:])
     lines = [
         "# Final factor research experiments", "",
         f"Run: `{result['run_id']}` · Git commit: `{result['git_commit_sha']}` · Config SHA-256: `{result['config_sha256']}`", "",
@@ -120,12 +123,14 @@ def render_report(result: dict, manifest: dict, figure_names: list[str], root: P
         "Model comparisons are descriptive single-budget research runs, not statistically powered estimates of expected performance.", "",
         "## Run status", "",
     ]
-    lines += markdown_table([{"arm": name, "status": item["status"], "models": "/".join(ROLE_NAMES.get(name, ("—", "—")))} for name, item in manifest["arms"].items()], [("arm", "Arm"), ("status", "Status"), ("models", "Macro / Micro")])
+    lines += markdown_table([{"arm": name, "status": manifest["arms"].get(name, {}).get("status", "not run"), "models": "/".join(ROLE_NAMES.get(name, ("—", "—")))} for name in expected_arms], [("arm", "Arm"), ("status", "Status"), ("models", "Macro / Micro")])
+    if missing_llm:
+        lines += ["", "The model arms were not executed: this environment did not grant permission to send project-derived research-state summaries and factor proposals to the OpenAI API. Their absent results are not zero-valued outcomes. No LLM advantage or role allocation can be inferred from this partial run."]
     lines += ["", "## A · Initial vs post-feedback", ""]
     lines += markdown_table(result["cohorts"], [("arm", "Arm"), ("cohort", "Cohort"), ("candidate_count", "N"), ("median_mean_rank_ic", "Median IC"), ("p75_mean_rank_ic", "P75 IC"), ("median_newey_west_tstat", "Median NW t"), ("all_positive_fold_rate", "All-positive folds"), ("median_high_cost_sharpe", "Median high-cost Sharpe"), ("parent_rate", "Parent rate"), ("elite_rate", "Elite rate")])
     lines += ["", "## B · Architecture", ""]
-    lines += markdown_table([by_name[name] for name in ("fixed_deterministic", "adaptive_deterministic") if name in by_name], [("arm", "Arm"), ("candidate_count", "N"), ("median_mean_rank_ic", "Median IC"), ("median_high_cost_sharpe", "Median high-cost Sharpe"), ("parent_count", "Common Parents"), ("elite_count", "Common Elites"), ("unique_parent_clusters", "Unique clusters"), ("valid_information_per_10_candidates", "Valid / 10")])
-    lines += ["", "The fixed-generation arm is classified post hoc using the current Parent/Elite gates; its original search decisions are preserved.", "", "## C · Deterministic vs Luna High", ""]
+    lines += markdown_table([by_name[name] for name in ("fixed_deterministic", "adaptive_deterministic") if name in by_name], [("arm", "Arm"), ("candidate_count", "N"), ("median_mean_rank_ic", "Median IC"), ("median_high_cost_sharpe", "Median high-cost Sharpe"), ("parent_count", "Common Parents"), ("elite_count", "Common Elites"), ("unique_parent_clusters", "Unique clusters"), ("unique_parent_clusters_per_10_candidates", "Clusters / 10"), ("valid_information_per_10_candidates", "Valid / 10"), ("duplicate_formula_rate", "Duplicate rate"), ("invalid_proposal_rate", "Invalid rate")])
+    lines += ["", "Both arms had a 60-candidate cap, but the fixed generator exhausted novel proposals after 33 evaluated candidates. Counts therefore have unequal denominators; per-10 rates are shown, but this single run does not isolate architecture from proposal coverage. The fixed-generation arm is classified post hoc using the current Parent/Elite gates; its original search decisions are preserved.", "", "## C · Deterministic vs Luna High", ""]
     lines += markdown_table([by_name[name] for name in ("adaptive_deterministic", "luna_luna") if name in by_name], [("arm", "Arm"), ("candidate_count", "N"), ("first_parent_index", "First Parent"), ("first_elite_index", "First Elite"), ("unique_parent_clusters", "Unique clusters"), ("median_mean_rank_ic", "Median IC"), ("median_high_cost_sharpe", "Median high-cost Sharpe"), ("raw_llm_proposal_rejection_rate", "Raw proposal rejection")])
     lines += ["", "## D · Model roles, tokens and cost", ""]
     model_summaries = [by_name[name] for name in ("luna_luna", "sol_sol", "sol_luna", "luna_sol") if name in by_name]
@@ -135,6 +140,13 @@ def render_report(result: dict, manifest: dict, figure_names: list[str], root: P
     lines += markdown_table(comparison, [("arm", "Arm"), ("macro_model_id", "Macro model"), ("micro_model_id", "Micro model"), ("combined_total_tokens", "Total tokens"), ("total_estimated_cost_usd", "Est. USD"), ("unique_parent_clusters", "Unique clusters"), ("unique_parent_clusters_per_100k_tokens", "Clusters / 100k tokens"), ("median_mean_rank_ic", "Median IC")])
     lines += ["", f"Pricing as of {result['pricing_as_of']} from [Luna](https://developers.openai.com/api/docs/models/gpt-5.6-luna) and [Sol](https://developers.openai.com/api/docs/models/gpt-5.6-sol) model pages. Costs are estimates from recorded token usage, not invoice amounts.", "", "## Repair evidence", ""]
     lines += markdown_table(result["repairs"], [("arm", "Arm"), ("parent_factor_id", "Parent"), ("child_factor_id", "Child"), ("targeted_failure", "Target"), ("delta_mean_rank_ic", "Δ IC"), ("delta_high_cost_sharpe", "Δ high-cost Sharpe"), ("target_improved", "Target improved"), ("collateral_damage", "Collateral damage"), ("repair_succeeded", "Repair succeeded")])
+    if "adaptive_deterministic" in by_name:
+        gate_counts = result["elite_gate_counts"]["adaptive_deterministic"]
+        failed_cost = gate_counts["high_cost_sharpe"]
+        repair_pairs = [row for row in result["repairs"] if row["arm"] == "adaptive_deterministic"]
+        improved = sum(row["target_improved"] is True for row in repair_pairs)
+        collateral = sum(row["collateral_damage"] is True for row in repair_pairs)
+        lines += ["", f"The main Elite bottleneck was high-cost Sharpe: {failed_cost}/{gate_counts['parent_count']} common Parents failed that gate. Targeted repairs improved their intended metric in {improved}/{len(repair_pairs)} paired attempts, but {collateral}/{len(repair_pairs)} caused collateral damage. No candidate passed every Elite gate. The post-feedback cohort's median IC increased slightly, while its median high-cost Sharpe and all-positive-fold rate worsened, so iteration did not establish a broad quality improvement.", ""]
     lines += ["", "## Representative lineages", ""]
     for label, item in result["cases"].items():
         if item is None:
