@@ -179,9 +179,12 @@ For the next generation, promoted factors receive deterministic bounded mutation
 `llm.enabled` is true and `OPENAI_API_KEY` is available, the restricted LLM generator also
 receives the cumulative state, a bounded set of prior experiment records, eligible Promote/Hold parent
 specifications, the allowed DSL catalog, and remaining budget. Its structured proposals are
-validated again locally for parent lineage, windows, complexity, uniqueness, and allowed
-primitives before evaluation. `artifacts/experiments/generation_events.jsonl` records whether
-the LLM was used and why any proposals were rejected.
+validated again locally for windows, complexity, uniqueness, allowed primitives, and leakage
+before evaluation. In the adaptive path, Macro-owned mechanism, lineage, and proposal budget
+are omitted from Micro output and bound locally. Operator-specific params and separate
+windowed/scalar feature schemas prevent the dominant malformed DSL cases before semantic
+validation. `artifacts/experiments/generation_events.jsonl` records whether the LLM was used,
+one allowed structured-output retry, stage-level rejection counters, and deterministic fill.
 
 `ResearchState` also maintains a stable failure taxonomy (`unstable_ic`, `weak_signal`,
 `cost_sensitivity`, `excessive_turnover`, `redundancy`, and integrity failures) and a

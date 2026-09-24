@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from src.selection.diagnostics import diagnose_elite_gates
 from src.utils.logging import ExperimentRecord
 
 
@@ -18,22 +19,11 @@ def classify_tier(record: ExperimentRecord, config: dict) -> TierDecision:
         return TierDecision(
             "RETIRED", tuple(record.integrity_issues) or ("integrity failure",)
         )
+    diagnostic = diagnose_elite_gates(record, config)
     ic = record.mean_rank_ic if record.mean_rank_ic is not None else float("-inf")
-    tstat = record.ic_tstat if record.ic_tstat is not None else float("-inf")
     folds = record.positive_fold_count or 0
     turnover = record.turnover if record.turnover is not None else float("inf")
-    high_cost = (
-        record.high_cost_sharpe
-        if record.high_cost_sharpe is not None
-        else float("-inf")
-    )
-    if (
-        ic >= float(config.get("elite_min_mean_ic", 0.005))
-        and tstat >= float(config.get("elite_min_tstat", 1.0))
-        and folds >= int(config.get("elite_min_positive_folds", 3))
-        and high_cost >= float(config.get("elite_min_high_cost_sharpe", 0.0))
-        and turnover <= float(config.get("elite_max_turnover", 1.5))
-    ):
+    if diagnostic.passed:
         return TierDecision("ELITE", ("Passed strict archive thresholds.",))
     if (
         ic > float(config.get("parent_min_mean_ic", 0.0))

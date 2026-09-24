@@ -68,10 +68,12 @@ class DeterministicMacroBrain:
         if (
             coverage["satisfied"]
             and len(memory.recent_experiments) >= min_evidence
-            and memory.rounds_without_improvement >= stop_rounds
+            and memory.rounds_without_elite >= stop_rounds
+            and memory.rounds_without_new_cluster >= stop_rounds
+            and memory.rounds_without_best_quality_improvement >= stop_rounds
         ):
             return self._stop(
-                "No elite improvement within the precommitted patience window."
+                "No Elite, new Parent cluster, or best-quality improvement within the precommitted patience window."
             )
 
         tested = coverage["tested"]
@@ -128,30 +130,12 @@ class DeterministicMacroBrain:
                 self._budget("PIVOT", remaining_budget),
             )
 
-        current = memory.current_theme.upper() if memory.current_theme else None
-        current_failures = int(
-            memory.mechanism_stats.get(current or "", {}).get("retired", 0)
-        )
-        current_has_parent = any(
-            artifact.mechanism == current for artifact in parent_pool.values()
-        )
-        if memory.rounds_without_improvement >= 2 or (
-            current_failures >= int(self.config.get("pivot_failure_threshold", 3))
-            and not current_has_parent
-        ):
-            return ResearchPlan(
-                "PIVOT",
-                least_tested.lower(),
-                least_tested,
-                "Move to a less explored mechanism after a stalled research round.",
-                (),
-                "Recent evidence did not improve the elite archive.",
-                self._budget("PIVOT", remaining_budget),
-            )
+        def parent_rank(item: FactorArtifact) -> tuple:
+            failed = item.record.elite_gate_diagnostic.get("failed_gates", ())
+            # Prefer Parents closest to Elite on independent configured gates.
+            return (len(failed), -item.quality)
 
-        ranked = sorted(
-            parent_pool.values(), key=lambda item: item.quality, reverse=True
-        )
+        ranked = sorted(parent_pool.values(), key=parent_rank)
         if len(ranked) >= 2:
             corr_limit = float(self.config.get("combine_max_parent_correlation", 0.50))
 
@@ -209,15 +193,44 @@ class DeterministicMacroBrain:
                     f"but only {stats['unique_clusters']} unique signal clusters.",
                     self._budget("PIVOT", remaining_budget),
                 )
+        failure = self._target_failure(best)
         return ResearchPlan(
             "IMPROVE",
             best.mechanism.lower(),
             best.mechanism,
-            "Repair the strongest parent's main weakness without changing its economic mechanism.",
+            self._repair_goal(failure[0]),
             (best.spec.factor_id,),
-            "The current parent is promising but not yet robust enough.",
+            f"Target {failure[0]} from this Parent's independent Elite-gate diagnostics; preserve {failure[2]}.",
             self._budget("IMPROVE", remaining_budget),
+            targeted_failure=failure[0],
+            target_metric=failure[1],
+            preserve_metric=failure[2],
         )
+
+    @staticmethod
+    def _target_failure(parent: FactorArtifact) -> tuple[str, str, str]:
+        failed = set(parent.record.elite_gate_diagnostic.get("failed_gates", ()))
+        priority = (
+            ("turnover", "excessive_turnover", "turnover", "mean_rank_ic"),
+            ("high_cost_sharpe", "cost_sensitivity", "high_cost_sharpe", "mean_rank_ic"),
+            ("positive_folds", "temporal_instability", "positive_fold_count", "mean_rank_ic"),
+            ("tstat", "low_statistical_significance", "newey_west_tstat", "mean_rank_ic"),
+            ("mean_ic", "weak_predictive_signal", "mean_rank_ic", "high_cost_sharpe"),
+        )
+        for gate, failure, target, preserve in priority:
+            if gate in failed:
+                return failure, target, preserve
+        return "weak_predictive_signal", "mean_rank_ic", "high_cost_sharpe"
+
+    @staticmethod
+    def _repair_goal(failure: str) -> str:
+        return {
+            "excessive_turnover": "Reduce turnover with a slower or smoothed variant while preserving predictive IC.",
+            "cost_sensitivity": "Improve high-cost Sharpe using a slower/smoother same-mechanism signal while preserving IC.",
+            "temporal_instability": "Improve positive-fold consistency with a simpler/slower same-mechanism signal while preserving mean IC.",
+            "low_statistical_significance": "Improve Newey-West significance without degrading mean IC.",
+            "weak_predictive_signal": "Make at most one economically distinct improvement; if IC remains weak, pivot mechanism.",
+        }.get(failure, "Repair the measured Elite-gate weakness while preserving the signal's predictive IC.")
 
     def _is_saturated(self, memory: ResearchMemory, mechanism: str) -> bool:
         stats = memory.parent_cluster_stats.get(mechanism, {})
@@ -366,6 +379,12 @@ class LLMMacroBrain:
             "good_lessons": memory.good_lessons[-8:],
             "bad_lessons": memory.bad_lessons[-8:],
             "rounds_without_improvement": memory.rounds_without_improvement,
+            "progress_counters": {
+                "rounds_without_parent": memory.rounds_without_parent,
+                "rounds_without_new_cluster": memory.rounds_without_new_cluster,
+                "rounds_without_elite": memory.rounds_without_elite,
+                "rounds_without_best_quality_improvement": memory.rounds_without_best_quality_improvement,
+            },
             "eligible_parents": parents,
             "parent_correlations": correlations,
             "constraints": {
@@ -465,6 +484,18 @@ class LLMMacroBrain:
             tuple(proposal.parent_ids),
             proposal.reason,
             proposal.candidate_budget,
+            deterministic_plan.targeted_failure
+            if proposal.action == "IMPROVE"
+            and tuple(proposal.parent_ids) == deterministic_plan.parent_ids
+            else None,
+            deterministic_plan.target_metric
+            if proposal.action == "IMPROVE"
+            and tuple(proposal.parent_ids) == deterministic_plan.parent_ids
+            else None,
+            deterministic_plan.preserve_metric
+            if proposal.action == "IMPROVE"
+            and tuple(proposal.parent_ids) == deterministic_plan.parent_ids
+            else None,
         )
         return MacroPlanResult(plan, True, "structured_llm_plan", **metadata)
 

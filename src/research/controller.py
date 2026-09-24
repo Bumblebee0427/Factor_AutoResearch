@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pandas as pd
@@ -35,6 +36,7 @@ from src.research.failure_policy import (
 )
 from src.research.loop import ResearchLoop
 from src.selection.archive import EliteArchive, ParentPool
+from src.selection.diagnostics import diagnose_elite_gates
 from src.selection.gates import classify_tier
 from src.selection.library import build_final_library
 
@@ -318,11 +320,25 @@ class AdaptiveResearchController:
                             self.memory.proposal_failure_counts[code] = (
                                 self.memory.proposal_failure_counts.get(code, 0) + 1
                             )
+                tier = classify_tier(record, self.settings)
+                elite_diagnostic = diagnose_elite_gates(
+                    record, self.settings
+                ).to_dict()
+                record = replace(
+                    record,
+                    mechanism=mechanism,
+                    elite_gate_diagnostic=elite_diagnostic,
+                )
                 self.base_loop.records.append(record)
                 self.base_loop.store.append(record)
-                tier = classify_tier(record, self.settings)
                 outcome = ResearchOutcome(
-                    spec, record, tier.tier, mechanism, plan.action
+                    spec,
+                    record,
+                    tier.tier,
+                    mechanism,
+                    plan.action,
+                    elite_diagnostic,
+                    self._repair_result(spec, record, plan),
                 )
                 round_outcomes.append(outcome)
                 self.outcomes.append(outcome)
@@ -342,12 +358,17 @@ class AdaptiveResearchController:
                             "representative_id": admission.representative_id,
                             "absolute_correlation": admission.absolute_correlation,
                             "evicted_ids": list(admission.evicted_ids),
+                            "new_cluster": admission.new_cluster,
                         }
                     )
                     if tier.tier == "ELITE":
                         self.elite_archive.add(artifact)
                         self.base_loop.promoted_specs[spec.factor_id] = spec
                         self.base_loop.promoted_signals[spec.factor_id] = signal
+            new_elite_admitted = any(
+                item.tier == "ELITE" and item.spec.factor_id in self.elite_archive.items
+                for item in round_outcomes
+            )
             summary = {
                 "round_id": round_id,
                 "action": plan.action,
@@ -372,9 +393,20 @@ class AdaptiveResearchController:
                 ),
                 "parent_cluster_stats": self.parent_pool.cluster_stats(),
                 "parent_admissions": parent_admissions,
+                "new_parent_observed": any(
+                    item.get("status") in {"added", "replaced"}
+                    for item in parent_admissions
+                ),
+                "new_cluster_admitted": any(
+                    item.get("new_cluster", False) for item in parent_admissions
+                ),
+                "new_elite_admitted": new_elite_admitted,
+                "best_quality_improved": self._update_best_quality(round_outcomes),
                 "llm": llm_event,
             }
-            self.cross.update_memory(self.memory, round_outcomes, summary)
+            self.cross.update_memory(
+                self.memory, round_outcomes, summary, self.settings
+            )
             self.memory.parent_pool_ids = list(self.parent_pool.items)
             self.memory.parent_cluster_stats = self.parent_pool.cluster_stats()
             self.memory_store.append_round(
@@ -391,6 +423,110 @@ class AdaptiveResearchController:
         self.base_loop.store.write_family_tree(self.base_loop.records)
         self.construct_library()
         return self.outcomes
+
+    def _update_best_quality(self, outcomes: list[ResearchOutcome]) -> bool:
+        """Track a research-visible Pareto improvement across raw gate metrics."""
+        tolerance = float(self.settings.get("best_quality_improvement_tolerance", 0.001))
+        best = self.memory.best_quality_metrics
+        improved = False
+        for outcome in outcomes:
+            record = outcome.record
+            if not record.integrity_passed:
+                continue
+            candidate = {
+                "mean_rank_ic": record.mean_rank_ic,
+                "ic_tstat": record.ic_tstat,
+                "positive_fold_count": record.positive_fold_count,
+                "high_cost_sharpe": record.high_cost_sharpe,
+                "turnover_margin": (
+                    float(self.settings.get("elite_max_turnover", 1.5))
+                    - record.turnover
+                    if record.turnover is not None
+                    else None
+                ),
+            }
+            candidate = {
+                key: float(value)
+                for key, value in candidate.items()
+                if value is not None and pd.notna(value)
+            }
+            if not candidate:
+                continue
+            if not best:
+                self.memory.best_quality_metrics = candidate
+                self.memory.best_quality_mechanism = outcome.mechanism
+                improved = True
+                continue
+            comparable = set(best) & set(candidate)
+            if not comparable:
+                continue
+            no_material_regression = all(
+                candidate[key] >= best[key] - tolerance for key in comparable
+            )
+            material_gain = any(
+                candidate[key] >= best[key] + tolerance for key in comparable
+            )
+            if no_material_regression and material_gain:
+                self.memory.best_quality_metrics = {
+                    **best,
+                    **candidate,
+                }
+                self.memory.best_quality_mechanism = outcome.mechanism
+                best = self.memory.best_quality_metrics
+                improved = True
+        return improved
+
+    def _repair_result(self, spec, record, plan: ResearchPlan) -> dict:
+        if not plan.targeted_failure or not spec.parent_ids:
+            return {}
+        parent = self.parent_pool.items.get(spec.parent_ids[0])
+        if parent is None:
+            return {"targeted_failure": plan.targeted_failure, "parent_available": False}
+
+        names = {
+            "mean_rank_ic": "mean_rank_ic",
+            "newey_west_tstat": "ic_tstat",
+            "positive_fold_count": "positive_fold_count",
+            "high_cost_sharpe": "high_cost_sharpe",
+            "turnover": "turnover",
+        }
+        target_name = names.get(plan.target_metric or "")
+        preserve_name = names.get(plan.preserve_metric or "")
+        before_target = getattr(parent.record, target_name) if target_name else None
+        after_target = getattr(record, target_name) if target_name else None
+        before_preserve = getattr(parent.record, preserve_name) if preserve_name else None
+        after_preserve = getattr(record, preserve_name) if preserve_name else None
+        tolerance = float(self.settings.get("repair_preserve_tolerance", 0.001))
+        target_improved = (
+            before_target is not None
+            and after_target is not None
+            and (
+                after_target < before_target - tolerance
+                if plan.target_metric == "turnover"
+                else after_target > before_target + tolerance
+            )
+        )
+        collateral_damage = (
+            before_preserve is not None
+            and after_preserve is not None
+            and (
+                after_preserve < before_preserve - tolerance
+                if plan.preserve_metric != "turnover"
+                else after_preserve > before_preserve + tolerance
+            )
+        )
+        return {
+            "targeted_failure": plan.targeted_failure,
+            "target_metric": plan.target_metric,
+            "target_before": before_target,
+            "target_after": after_target,
+            "preserve_metric": plan.preserve_metric,
+            "preserve_before": before_preserve,
+            "preserve_after": after_preserve,
+            "target_improved": target_improved,
+            "collateral_damage": collateral_damage,
+            "repair_succeeded": bool(target_improved and not collateral_damage),
+        }
 
     def _novelty_rescue(
         self, round_id: int, remaining: int
@@ -464,6 +600,8 @@ class AdaptiveResearchController:
                 "model": micro.model,
                 "usage": micro.usage,
                 "research_summary": micro.research_summary,
+                "retry_count": micro.retry_count,
+                "stage_counts": micro.stage_counts,
             },
         }
 

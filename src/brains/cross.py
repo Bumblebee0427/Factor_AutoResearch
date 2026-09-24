@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 from src.core.schemas import ResearchMemory, ResearchOutcome
-from src.research.failure_policy import INTEGRITY_RESPONSES, PRIORITY
+from src.research.failure_policy import (
+    INTEGRITY_RESPONSES,
+    METRIC_FAILURE_POLICIES,
+    PRIORITY,
+    metric_failure_types,
+)
 
 
 class CrossBrain:
-    def reflect(self, outcomes: list[ResearchOutcome]) -> tuple[list[dict], list[dict]]:
+    def reflect(
+        self, outcomes: list[ResearchOutcome], research_config: dict | None = None
+    ) -> tuple[list[dict], list[dict]]:
         good: list[dict] = []
         bad: list[dict] = []
         for outcome in outcomes:
@@ -19,6 +26,10 @@ class CrossBrain:
                 "ic_tstat": record.ic_tstat,
                 "positive_fold_count": record.positive_fold_count,
                 "high_cost_sharpe": record.high_cost_sharpe,
+                "turnover": record.turnover,
+                "failed_elite_gates": list(
+                    record.elite_gate_diagnostic.get("failed_gates", ())
+                ),
             }
             if outcome.tier in {"PARENT", "ELITE"}:
                 good.append(
@@ -33,8 +44,8 @@ class CrossBrain:
                         ],
                     }
                 )
-            else:
-                codes = list(record.failure_codes) or ["weak_evidence"]
+            if outcome.tier == "RETIRED":
+                codes = list(record.failure_codes)
                 policy = next(
                     (INTEGRITY_RESPONSES[code] for code in PRIORITY if code in codes),
                     None,
@@ -47,7 +58,7 @@ class CrossBrain:
                         "avoidance_rule": (
                             policy["instruction"]
                             if policy
-                            else f"Do not repeat the same {outcome.mechanism} formula without targeting {codes[0]}."
+                            else f"Do not repeat the same {outcome.mechanism} formula without targeting its measured failure."
                         ),
                         "recommended_action": policy["action"]
                         if policy
@@ -64,6 +75,37 @@ class CrossBrain:
                         "terminal": bool(policy and policy["terminal"]),
                     }
                 )
+                if policy is None:
+                    for failure_type in metric_failure_types(
+                        record, record.elite_gate_diagnostic, research_config or {}
+                    ):
+                        metric_policy = METRIC_FAILURE_POLICIES[failure_type]
+                        bad.append({
+                            "type": "BAD",
+                            **evidence,
+                            "failure_type": failure_type,
+                            "diagnosis": metric_policy["diagnosis"],
+                            "repair_policy": list(metric_policy["repair_policy"]),
+                            "terminal": metric_policy["terminal"],
+                        })
+            elif outcome.tier == "PARENT" and evidence["failed_elite_gates"]:
+                failure_types = metric_failure_types(
+                    record,
+                    record.elite_gate_diagnostic,
+                    research_config or {},
+                )
+                for failure_type in failure_types:
+                    policy = METRIC_FAILURE_POLICIES[failure_type]
+                    bad.append(
+                        {
+                            "type": "BAD",
+                            **evidence,
+                            "failure_type": failure_type,
+                            "diagnosis": policy["diagnosis"],
+                            "repair_policy": list(policy["repair_policy"]),
+                            "terminal": policy["terminal"],
+                        }
+                    )
         return good, bad
 
     def update_memory(
@@ -71,8 +113,9 @@ class CrossBrain:
         memory: ResearchMemory,
         outcomes: list[ResearchOutcome],
         round_summary: dict,
+        research_config: dict | None = None,
     ) -> ResearchMemory:
-        good, bad = self.reflect(outcomes)
+        good, bad = self.reflect(outcomes, research_config)
         memory.good_lessons = (memory.good_lessons + good)[-50:]
         memory.bad_lessons = (memory.bad_lessons + bad)[-50:]
         memory.recent_experiments = (
@@ -85,9 +128,28 @@ class CrossBrain:
         memory.current_budget = int(
             round_summary.get("remaining_budget", memory.current_budget)
         )
-        useful_count = sum(item.tier in {"PARENT", "ELITE"} for item in outcomes)
+        memory.rounds_without_parent = (
+            0
+            if round_summary.get("new_parent_observed", False)
+            else memory.rounds_without_parent + 1
+        )
+        memory.rounds_without_new_cluster = (
+            0
+            if round_summary.get("new_cluster_admitted", False)
+            else memory.rounds_without_new_cluster + 1
+        )
+        memory.rounds_without_elite = (
+            0
+            if round_summary.get("new_elite_admitted", False)
+            else memory.rounds_without_elite + 1
+        )
+        memory.rounds_without_best_quality_improvement = (
+            0
+            if round_summary.get("best_quality_improved", False)
+            else memory.rounds_without_best_quality_improvement + 1
+        )
         memory.rounds_without_improvement = (
-            0 if useful_count else memory.rounds_without_improvement + 1
+            memory.rounds_without_best_quality_improvement
         )
         for outcome in outcomes:
             stats = memory.mechanism_stats.setdefault(

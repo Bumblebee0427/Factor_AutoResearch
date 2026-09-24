@@ -46,6 +46,8 @@ class ExperimentRecord:
     operator_count: int | None = None
     rolling_operator_count: int | None = None
     group_operator_count: int | None = None
+    mechanism: str | None = None
+    elite_gate_diagnostic: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -68,6 +70,7 @@ class ExperimentStore:
             "factor_id": record.factor_id,
             "parents": "|".join(record.parent_ids),
             "family": record.family,
+            "mechanism": record.mechanism,
             "proposal_type": record.proposal_type,
             "mean_rank_ic": record.mean_rank_ic,
             "ic_tstat": record.ic_tstat,
@@ -84,6 +87,9 @@ class ExperimentStore:
             "operator_count": record.operator_count,
             "rolling_operator_count": record.rolling_operator_count,
             "group_operator_count": record.group_operator_count,
+            "elite_failed_gates": "|".join(
+                record.elite_gate_diagnostic.get("failed_gates", ())
+            ),
         }
         exists = self.csv_path.exists()
         with self.csv_path.open("a", newline="", encoding="utf-8") as handle:

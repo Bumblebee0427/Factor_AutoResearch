@@ -6,9 +6,11 @@ from src.brains.macro import (
     LLMMacroBrain,
     LLMResearchPlanProposal,
 )
+from src.brains.micro import AdaptiveLLMMicroBrain, DeterministicMicroBrain
 from src.core.schemas import FactorArtifact, ResearchMemory, ResearchPlan
 from src.factors.schema import FactorSpec
 from src.research.controller import AdaptiveResearchController
+from src.research.llm_generator import AdaptiveFactorProposalBatch
 from src.utils.logging import ExperimentRecord
 
 
@@ -177,3 +179,79 @@ def test_adaptive_summary_handles_an_empty_trajectory() -> None:
     assert summary["candidates_tested"] == 0
     assert summary["invalid_proposal_ratio"] == 0.0
     assert not summary["holdout_evaluated"]
+
+
+def test_adaptive_micro_binds_plan_and_fills_unused_budget() -> None:
+    artifact = make_artifact()
+    batch = AdaptiveFactorProposalBatch.parse_obj(
+        {
+            "research_summary": "Repair the trend parent with one legal smoothing idea.",
+            "proposals": [
+                {
+                    "factor_id": "trend_parent_smooth_ast",
+                    "hypothesis": "Causal smoothing may preserve trend information while reducing transient noise.",
+                    "direction": 1,
+                    "mutation_reason": "Repair weak significance with a distinct legal transform.",
+                    "evidence_factor_ids": ["trend_parent"],
+                    "targeted_failure": "low_statistical_significance",
+                    "expected_metric_effect": "Improve Newey-West significance and fold stability.",
+                    "falsification_condition": "Reject if significance and stability do not improve.",
+                    "recipe_kind": "expression",
+                    "expression": {
+                        "kind": "op",
+                        "name": "rolling_mean",
+                        "args": [
+                            {
+                                "kind": "feature",
+                                "name": "return",
+                                "window": 20,
+                            }
+                        ],
+                        "params": {"window": 5},
+                    },
+                }
+            ],
+        }
+    )
+    responses = FakeResponses(batch)
+    micro = AdaptiveLLMMicroBrain(
+        {
+            "enabled": True,
+            "model": "gpt-5.6-luna",
+            "max_proposals_per_generation": 6,
+            "max_proposals_per_parent": 3,
+            "max_complexity": 4,
+            "allowed_windows": [1, 5, 10, 20, 60],
+        },
+        DeterministicMicroBrain(),
+        client=SimpleNamespace(responses=responses),
+    )
+    plan = ResearchPlan(
+        "IMPROVE",
+        "trend_stability",
+        "PRICE_TREND",
+        "Improve the trend parent.",
+        ("trend_parent",),
+        "Repair weak significance.",
+        2,
+    )
+
+    result = micro.generate(
+        plan,
+        {"trend_parent": artifact},
+        {artifact.spec.canonical_formula},
+        {"trend_parent"},
+        [artifact.record],
+        {"trend_parent": "PARENT"},
+        1,
+        20,
+    )
+
+    assert result.used_llm
+    assert len(result.candidates) == 2
+    assert result.llm_candidate_count == 1
+    assert result.deterministic_fill_count == 1
+    assert result.candidates[0].parent_ids == ("trend_parent",)
+    assert result.candidates[0].mechanism == "PRICE_TREND"
+    assert result.stage_counts["accepted_llm"] == 1
+    assert result.stage_counts["deterministic_fill"] == 1

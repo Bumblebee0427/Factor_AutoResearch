@@ -77,12 +77,14 @@ explicitly leaves for a later phase.
 The LLM is a proposal mechanism, not an execution engine. It receives compact cumulative
 research state, selected experiment metrics, and eligible Promote/Hold `FactorSpec` recipes, but no raw
 rows and no holdout results. Structured output constrains it to a closed feature/operator
-vocabulary. A nested union makes single-factor and interaction recipes mutually exclusive,
-so single-factor output cannot carry interaction-only fields. Local code then independently
-rejects unknown parents, invalid windows, excessive complexity, duplicate IDs/formulas, and
-malformed interactions. Only accepted `FactorSpec` objects reach the same deterministic
-builder and evaluator used by every non-LLM candidate.
-API failures are append-only audit events and trigger the deterministic exploration fallback.
+vocabulary. In the adaptive path, Macro owns action, mechanism, parent IDs, and candidate
+budget; those fields are absent from the Micro output schema and are injected locally.
+Windowed/scalar feature variants and operator-specific parameter objects make common DSL
+shape errors schema-invalid. Local code then independently checks plan eligibility, evidence,
+DSL semantics, complexity, duplicate IDs/formulas, leakage, and interaction requirements.
+Only accepted `FactorSpec` objects reach the same deterministic builder and evaluator used by
+every non-LLM candidate. A malformed structured response gets one controlled retry, then
+triggers deterministic fallback.
 
 The V2 DSL makes this boundary explicit: every accepted expression is an immutable typed AST,
 serialized canonically and evaluated through the authoritative operator registry. Legacy flat
@@ -90,7 +92,7 @@ serialized canonically and evaluated through the authoritative operator registry
 share one builder path. Static validation checks operator arity, parameter ranges, feature and
 group whitelists, history requirements, depth, and operator-family budgets before panel evaluation.
 
-The OpenAI adapter uses the Responses API with GPT-5.6 Luna, standard mode, low reasoning,
+The OpenAI adapter uses the Responses API with GPT-5.6 Luna, config-selected reasoning,
 low verbosity, structured Pydantic output, no tools, and remote response storage disabled.
 The local validator remains authoritative even when API schema validation succeeds.
 

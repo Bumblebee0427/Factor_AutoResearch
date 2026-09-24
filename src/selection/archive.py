@@ -17,6 +17,7 @@ class ParentAdmission:
     representative_id: str | None
     absolute_correlation: float | None = None
     evicted_ids: tuple[str, ...] = ()
+    new_cluster: bool = False
 
 
 class ParentPool:
@@ -89,7 +90,9 @@ class ParentPool:
                 and artifact.spec.complexity < incumbent.spec.complexity
             )
             if not better:
-                return ParentAdmission("suppressed", incumbent.spec.factor_id, corr)
+                return ParentAdmission(
+                    "suppressed", incumbent.spec.factor_id, corr, new_cluster=False
+                )
             clusters[index] = artifact
             replaced = incumbent.spec.factor_id
         else:
@@ -112,6 +115,7 @@ class ParentPool:
             else replaced,
             closest[0] if closest else None,
             evicted,
+            new_cluster=closest is None,
         )
 
     def cluster_stats(self) -> dict[str, dict]:

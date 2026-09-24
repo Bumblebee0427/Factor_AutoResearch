@@ -246,6 +246,66 @@ def test_macro_brain_supports_all_four_actions() -> None:
     assert macro.plan(empty, {}, {}, 0).action == "STOP"
 
 
+def test_macro_targets_the_parent_gate_with_largest_repair_priority() -> None:
+    spec = make_spec("turnover_parent")
+    record = make_record(
+        "turnover_parent",
+        turnover=2.2,
+        high_cost_sharpe=-0.1,
+        elite_gate_diagnostic={
+            "failed_gates": ["turnover", "high_cost_sharpe", "tstat"]
+        },
+    )
+    parent = FactorArtifact(spec, record, "PRICE_TREND")
+    plan = DeterministicMacroBrain({"minimum_mechanisms_before_stop": 0}).plan(
+        ResearchMemory(), {spec.factor_id: parent}, {}, 10
+    )
+    assert plan.action == "IMPROVE"
+    assert plan.targeted_failure == "excessive_turnover"
+    assert plan.target_metric == "turnover"
+    assert plan.preserve_metric == "mean_rank_ic"
+
+
+def test_macro_does_not_pivot_away_from_repairable_parent_on_stagnation_alone() -> None:
+    spec = make_spec("stalled_parent")
+    record = make_record(
+        "stalled_parent",
+        elite_gate_diagnostic={"failed_gates": ["high_cost_sharpe"]},
+    )
+    parent = FactorArtifact(spec, record, "PRICE_TREND")
+    memory = ResearchMemory(
+        rounds_without_parent=5,
+        rounds_without_new_cluster=5,
+        rounds_without_elite=5,
+        rounds_without_best_quality_improvement=5,
+        rounds_without_improvement=5,
+    )
+    plan = DeterministicMacroBrain({"minimum_mechanisms_before_stop": 0}).plan(
+        memory, {spec.factor_id: parent}, {}, 10
+    )
+    assert plan.action == "IMPROVE"
+    assert plan.targeted_failure == "cost_sensitivity"
+
+
+def test_macro_requires_all_independent_progress_counters_to_stop() -> None:
+    macro = DeterministicMacroBrain(
+        {
+            "minimum_evidence_before_stop": 1,
+            "minimum_mechanisms_before_stop": 0,
+            "stop_rounds_without_improvement": 2,
+        }
+    )
+    memory = ResearchMemory(
+        recent_experiments=[{"factor_id": "x"}],
+        rounds_without_elite=3,
+        rounds_without_new_cluster=3,
+        rounds_without_best_quality_improvement=3,
+    )
+    assert macro.plan(memory, {}, {}, 10).action == "STOP"
+    memory.rounds_without_new_cluster = 0
+    assert macro.plan(memory, {}, {}, 10).action == "PIVOT"
+
+
 def test_adaptive_seeds_cover_every_mechanism() -> None:
     counts = {
         mechanism: 0
@@ -330,3 +390,27 @@ def test_combine_preserves_both_parent_directions() -> None:
 
     assert proposals
     assert all(proposal.direction == -1 for proposal in proposals)
+
+
+def test_micro_turnover_repair_only_generates_smoother_longer_variants() -> None:
+    spec = make_spec("fast_parent", window=5)
+    parent = FactorArtifact(
+        spec,
+        make_record("fast_parent", turnover=2.1),
+        "PRICE_TREND",
+    )
+    plan = ResearchPlan(
+        "IMPROVE", "PRICE_TREND", "PRICE_TREND", "Lower turnover",
+        ("fast_parent",), "Reduce turnover, preserve IC", 4,
+        targeted_failure="excessive_turnover",
+        target_metric="turnover",
+        preserve_metric="mean_rank_ic",
+    )
+    proposals = DeterministicMicroBrain().generate(
+        plan, {"fast_parent": parent}, set(), 1
+    )
+    assert proposals
+    assert len(proposals) <= 3
+    assert all(item.window > spec.window for item in proposals)
+    assert all(item.ts_operator in {"rolling_mean", "vol_adjust"} for item in proposals)
+    assert all(item.targeted_failure == "excessive_turnover" for item in proposals)

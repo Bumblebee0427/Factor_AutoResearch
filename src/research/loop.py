@@ -297,6 +297,8 @@ class ResearchLoop:
                     "response_id": llm_result.response_id,
                     "usage": llm_result.usage,
                     "research_summary": llm_result.research_summary,
+                    "retry_count": llm_result.retry_count,
+                    "stage_counts": llm_result.stage_counts,
                 }
             )
             if llm_result.used_llm:

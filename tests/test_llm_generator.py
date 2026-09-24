@@ -6,11 +6,15 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
+from src.factors.operator_registry import OPERATOR_REGISTRY
 from src.factors.schema import FactorSpec
 from src.research.llm_generator import (
+    AdaptiveFactorProposalBatch,
     FactorProposalBatch,
+    LLM_OPERATOR_PARAM_KEYS,
     LLMFactorGenerator,
     SingleFactorProposal,
+    WindowedFeatureProposal,
 )
 from src.research.memory import ResearchState
 from src.utils.logging import ExperimentRecord
@@ -92,6 +96,43 @@ def generator_config(**overrides) -> dict:
     }
     config.update(overrides)
     return config
+
+
+def adaptive_expression_proposal(
+    factor_id: str,
+    expression: dict,
+    *,
+    evidence_factor_ids: list[str] | None = None,
+) -> dict:
+    return {
+        "factor_id": factor_id,
+        "hypothesis": "A constrained expression may capture economically persistent cross-sectional information.",
+        "direction": 1,
+        "mutation_reason": "Test one legal and auditable DSL mutation.",
+        "evidence_factor_ids": evidence_factor_ids or [],
+        "targeted_failure": "none",
+        "expected_metric_effect": "Improve stable rank IC without increasing implementation risk.",
+        "falsification_condition": "Reject if fold signs are unstable or incremental IC is negligible.",
+        "recipe_kind": "expression",
+        "expression": expression,
+    }
+
+
+def adaptive_batch(*proposals: dict) -> AdaptiveFactorProposalBatch:
+    return AdaptiveFactorProposalBatch.parse_obj(
+        {
+            "research_summary": "Generate only schema-valid factor ideas under the immutable plan.",
+            "proposals": list(proposals),
+        }
+    )
+
+
+def feature(name: str = "return", window: int = 20) -> dict:
+    return {"kind": "feature", "name": name, "window": window}
+
+
+def op(name: str, args: list[dict], params: dict) -> dict:
+    return {"kind": "op", "name": name, "args": args, "params": params}
 
 
 def test_missing_api_key_uses_deterministic_fallback(monkeypatch) -> None:
@@ -326,3 +367,320 @@ def test_llm_context_excludes_raw_data_and_holdout_year() -> None:
         == "REPROPOSE_VALID_GROUP"
     )
     assert "future_return[5]" not in json.dumps(context)
+
+
+def test_no_param_operator_rejects_extra_parameter_fields() -> None:
+    with pytest.raises(ValidationError):
+        adaptive_batch(
+            adaptive_expression_proposal(
+                "bad_rank_params",
+                op("cs_rank", [feature()], {"window": 20}),
+            )
+        )
+
+
+def test_rolling_operator_accepts_only_window() -> None:
+    valid = adaptive_batch(
+        adaptive_expression_proposal(
+            "valid_rolling",
+            op("rolling_mean", [feature()], {"window": 20}),
+        )
+    )
+    assert valid.proposals[0].expression.name == "rolling_mean"
+
+    with pytest.raises(ValidationError):
+        adaptive_batch(
+            adaptive_expression_proposal(
+                "bad_rolling",
+                op("rolling_mean", [feature()], {"halflife": 5}),
+            )
+        )
+
+
+def test_feature_schema_forbids_fundamental_windows_and_zero_windows() -> None:
+    with pytest.raises(ValidationError):
+        adaptive_batch(
+            adaptive_expression_proposal(
+                "bad_fundamental_window",
+                {"kind": "feature", "name": "after_tax_roe", "window": 20},
+            )
+        )
+    with pytest.raises(ValidationError):
+        adaptive_batch(
+            adaptive_expression_proposal(
+                "bad_zero_window",
+                feature(window=0),
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    ("name", "window"),
+    [
+        (name, window)
+        for name in (
+            "return",
+            "volatility",
+            "volume_shock",
+            "distance_to_high",
+            "news_volume",
+        )
+        for window in (1, 5, 10, 20, 60)
+    ],
+)
+def test_all_legal_feature_windows_are_accepted(name: str, window: int) -> None:
+    parsed = WindowedFeatureProposal.parse_obj(feature(name=name, window=window))
+    assert parsed.name == name
+    assert parsed.window == window
+
+
+def test_adaptive_pivot_lineage_and_mechanism_are_bound_locally() -> None:
+    batch = adaptive_batch(
+        adaptive_expression_proposal(
+            "pivot_volatility",
+            op("cs_rank", [feature("volatility", 20)], {}),
+        )
+    )
+    client, parser = fake_client(batch)
+    generator = LLMFactorGenerator(generator_config(), client=client)
+
+    result = generator.propose(
+        generation=2,
+        state=ResearchState(),
+        recent_records=[],
+        parent_specs={},
+        parent_decisions={},
+        tested_ids=set(),
+        research_plan={
+            "action": "PIVOT",
+            "mechanism": "VOLATILITY",
+            "parent_ids": (),
+            "candidate_budget": 1,
+        },
+    )
+
+    assert result.used_llm
+    assert result.candidates[0].parent_ids == ()
+    assert result.candidates[0].mechanism == "VOLATILITY"
+    assert result.candidates[0].proposal_type == "xalpha_pivot"
+    assert parser.call["text_format"] is AdaptiveFactorProposalBatch
+    context = json.loads(parser.call["input"])
+    assert context["generation_contract"] == {
+        "action": "PIVOT",
+        "mechanism": "VOLATILITY",
+        "must_be_interaction": False,
+        "must_be_parent_free": True,
+        "planned_parent_ids": [],
+        "proposal_slots": 1,
+        "routing_fields_are_local": [
+            "parent_ids",
+            "mechanism",
+            "family",
+            "proposal_type",
+        ],
+    }
+    adaptive_schema = json.dumps(AdaptiveFactorProposalBatch.schema())
+    assert '"parent_ids"' not in adaptive_schema
+    assert '"mechanism"' not in adaptive_schema
+
+
+def test_adaptive_improve_budget_four_ignores_legacy_parent_cap() -> None:
+    proposals = [
+        adaptive_expression_proposal(
+            f"improve_{window}",
+            op("rolling_mean", [feature()], {"window": window}),
+            evidence_factor_ids=["price_parent"],
+        )
+        for window in (1, 5, 10, 60)
+    ]
+    client, _ = fake_client(adaptive_batch(*proposals))
+    generator = LLMFactorGenerator(generator_config(), client=client)
+
+    result = generator.propose(
+        generation=3,
+        state=ResearchState(),
+        recent_records=[],
+        parent_specs={"price_parent": make_parent()},
+        parent_decisions={"price_parent": "HOLD"},
+        tested_ids={"price_parent"},
+        research_plan={
+            "action": "IMPROVE",
+            "mechanism": "PRICE_TREND",
+            "parent_ids": ("price_parent",),
+            "candidate_budget": 4,
+        },
+    )
+
+    assert len(result.candidates) == 4
+    assert all(spec.parent_ids == ("price_parent",) for spec in result.candidates)
+    assert all(spec.mechanism == "PRICE_TREND" for spec in result.candidates)
+    assert not any("per-parent" in reason for reason in result.rejected)
+
+
+def test_adaptive_combine_lineage_is_bound_locally() -> None:
+    quality_parent = FactorSpec(
+        factor_id="quality_parent",
+        generation=0,
+        parent_ids=(),
+        family="fundamental",
+        hypothesis="Durable profitability may remain underpriced across firms.",
+        base_feature="after_tax_roe",
+        cs_operator="rank",
+    )
+    batch = adaptive_batch(
+        adaptive_expression_proposal(
+            "combine_price_quality",
+            op(
+                "mul",
+                [feature(), {"kind": "feature", "name": "after_tax_roe"}],
+                {},
+            ),
+            evidence_factor_ids=["price_parent", "quality_parent"],
+        )
+    )
+    client, _ = fake_client(batch)
+    generator = LLMFactorGenerator(generator_config(), client=client)
+
+    result = generator.propose(
+        generation=4,
+        state=ResearchState(),
+        recent_records=[],
+        parent_specs={
+            "price_parent": make_parent(),
+            "quality_parent": quality_parent,
+        },
+        parent_decisions={"price_parent": "HOLD", "quality_parent": "HOLD"},
+        tested_ids={"price_parent", "quality_parent"},
+        research_plan={
+            "action": "COMBINE",
+            "mechanism": "PRICE_TREND",
+            "parent_ids": ("price_parent", "quality_parent"),
+            "candidate_budget": 1,
+        },
+    )
+
+    assert result.used_llm
+    assert set(result.candidates[0].parent_ids) == {"price_parent", "quality_parent"}
+    assert result.candidates[0].mechanism == "CROSS_DOMAIN_REGIME"
+    assert result.candidates[0].family == "interaction"
+
+
+def test_adaptive_output_is_sliced_to_plan_candidate_budget() -> None:
+    proposals = [
+        adaptive_expression_proposal(
+            f"pivot_{window}",
+            op("rolling_mean", [feature()], {"window": window}),
+        )
+        for window in (1, 5, 10, 20, 60)
+    ]
+    proposals.append(
+        adaptive_expression_proposal(
+            "pivot_rank",
+            op("cs_rank", [feature()], {}),
+        )
+    )
+    client, _ = fake_client(adaptive_batch(*proposals))
+    generator = LLMFactorGenerator(generator_config(), client=client)
+
+    result = generator.propose(
+        generation=5,
+        state=ResearchState(),
+        recent_records=[],
+        parent_specs={},
+        parent_decisions={},
+        tested_ids=set(),
+        research_plan={
+            "action": "PIVOT",
+            "mechanism": "PRICE_TREND",
+            "parent_ids": (),
+            "candidate_budget": 3,
+        },
+    )
+
+    assert len(result.candidates) == 3
+    assert result.raw_proposal_count == 6
+    assert result.stage_counts["accepted_llm"] == 3
+
+
+class RetryParser:
+    def __init__(self, outcomes: list[object]) -> None:
+        self.outcomes = list(outcomes)
+        self.calls = []
+
+    def parse(self, **kwargs):
+        self.calls.append(kwargs)
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return SimpleNamespace(
+            output_parsed=outcome,
+            id="resp_retry_fake",
+            usage=SimpleNamespace(model_dump=lambda: {"total_tokens": 12}),
+        )
+
+
+def test_malformed_structured_output_retries_once_then_accepts() -> None:
+    batch = adaptive_batch(
+        adaptive_expression_proposal("retry_valid", op("cs_rank", [feature()], {}))
+    )
+    parse_error = ValidationError([], AdaptiveFactorProposalBatch)
+    parser = RetryParser([parse_error, batch])
+    generator = LLMFactorGenerator(
+        generator_config(), client=SimpleNamespace(responses=parser)
+    )
+
+    result = generator.propose(
+        generation=6,
+        state=ResearchState(),
+        recent_records=[],
+        parent_specs={},
+        parent_decisions={},
+        tested_ids=set(),
+        research_plan={
+            "action": "PIVOT",
+            "mechanism": "PRICE_TREND",
+            "parent_ids": (),
+            "candidate_budget": 1,
+        },
+    )
+
+    assert result.used_llm
+    assert result.retry_count == 1
+    assert result.stage_counts["structured_parse_failure"] == 1
+    assert len(parser.calls) == 2
+
+
+def test_malformed_structured_output_retries_only_once_then_falls_back() -> None:
+    parse_error = ValidationError([], AdaptiveFactorProposalBatch)
+    parser = RetryParser([parse_error, parse_error])
+    generator = LLMFactorGenerator(
+        generator_config(), client=SimpleNamespace(responses=parser)
+    )
+
+    result = generator.propose(
+        generation=7,
+        state=ResearchState(),
+        recent_records=[],
+        parent_specs={},
+        parent_decisions={},
+        tested_ids=set(),
+        research_plan={
+            "action": "PIVOT",
+            "mechanism": "PRICE_TREND",
+            "parent_ids": (),
+            "candidate_budget": 1,
+        },
+    )
+
+    assert not result.used_llm
+    assert result.reason.startswith("invalid_structured_output")
+    assert result.retry_count == 1
+    assert len(parser.calls) == 2
+
+
+def test_llm_operator_schema_matches_authoritative_registry() -> None:
+    registry_mapping = {
+        name: frozenset(spec.parameter_schema)
+        for name, spec in OPERATOR_REGISTRY.items()
+    }
+    assert LLM_OPERATOR_PARAM_KEYS == registry_mapping

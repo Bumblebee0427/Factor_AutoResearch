@@ -331,6 +331,9 @@ class DeterministicMicroBrain:
         if parent is None:
             return []
         spec = parent.spec
+        targeted = plan.targeted_failure
+        if targeted:
+            return self._targeted_repair(spec, plan, round_id)
         requires_window = spec.base_feature in {
             "return",
             "volatility",
@@ -415,6 +418,63 @@ class DeterministicMicroBrain:
             )
         return proposals
 
+    @staticmethod
+    def _targeted_repair(
+        spec: FactorSpec, plan: ResearchPlan, round_id: int
+    ) -> list[FactorSpec]:
+        """Generate a small, metric-directed neighborhood instead of cosmetic grids."""
+        if plan.targeted_failure == "redundancy":
+            return []  # Redundancy is addressed by Macro with a mechanism PIVOT.
+        if plan.targeted_failure == "weak_predictive_signal":
+            # One materially different horizon only; Macro should pivot if it fails.
+            choices = [window for window in (20, 60, 10, 5) if window != spec.window]
+            if not choices:
+                return []
+            window = choices[0]
+            ts_operator = "rolling_mean" if spec.base_feature in {
+                "return", "volatility", "volume_shock", "distance_to_high", "news_volume"
+            } else spec.ts_operator
+            variants = [(window, ts_operator, spec.cs_operator)]
+        elif plan.targeted_failure in {"excessive_turnover", "cost_sensitivity"}:
+            choices = [window for window in (20, 60) if spec.window is None or window > spec.window]
+            if not choices:
+                choices = [window for window in (20, 60, 10) if window != spec.window]
+            variants = [
+                (window, "rolling_mean", spec.cs_operator)
+                for window in choices[:2]
+            ]
+            if spec.base_feature == "return":
+                variants.append((choices[0], "vol_adjust", spec.cs_operator))
+        else:
+            # Significance and fold instability: simplify to one smoother/slower form.
+            choices = [window for window in (20, 60, 10) if window != spec.window]
+            if not choices:
+                return []
+            variants = [(choices[0], "rolling_mean", spec.cs_operator)]
+            if spec.cs_operator not in {"rank", "winsorize_zscore"}:
+                variants.append((choices[0], "rolling_mean", "rank"))
+
+        results = []
+        for index, (window, ts_operator, cs_operator) in enumerate(variants):
+            results.append(
+                replace(
+                    spec,
+                    factor_id=f"r{round_id}_repair_{_slug(spec.factor_id)}_{index}",
+                    generation=round_id,
+                    parent_ids=(spec.factor_id,),
+                    window=window,
+                    ts_operator=ts_operator,
+                    cs_operator=cs_operator,
+                    proposal_type="targeted_metric_repair",
+                    mutation_reason=plan.reason,
+                    evidence_factor_ids=(spec.factor_id,),
+                    targeted_failure=plan.targeted_failure,
+                    expected_metric_effect=f"Improve {plan.target_metric} while preserving {plan.preserve_metric}.",
+                    falsification_condition=f"Reject unless {plan.target_metric} improves without material damage to {plan.preserve_metric}.",
+                )
+            )
+        return results
+
     def _combine(
         self,
         plan: ResearchPlan,
@@ -484,6 +544,8 @@ class MicroProposalResult:
     model: str | None = None
     usage: dict = field(default_factory=dict)
     research_summary: str | None = None
+    retry_count: int = 0
+    stage_counts: dict[str, int] = field(default_factory=dict)
 
 
 class AdaptiveLLMMicroBrain:
@@ -570,18 +632,23 @@ class AdaptiveLLMMicroBrain:
             reason = "structured_llm_proposals_with_deterministic_fill"
         elif not accepted and fill:
             reason = f"{generated.reason}_deterministic_fallback"
+        stage_counts = dict(generated.stage_counts)
+        stage_counts["accepted_llm"] = len(accepted)
+        stage_counts["deterministic_fill"] = len(fill)
         return MicroProposalResult(
-            candidates,
-            bool(accepted),
-            reason,
-            tuple(rejected),
-            generated.raw_proposal_count,
-            len(accepted),
-            len(fill),
-            generated.response_id,
-            generated.model,
-            generated.usage,
-            generated.research_summary,
+            candidates=candidates,
+            used_llm=bool(accepted),
+            reason=reason,
+            rejected=tuple(rejected),
+            raw_proposal_count=generated.raw_proposal_count,
+            llm_candidate_count=len(accepted),
+            deterministic_fill_count=len(fill),
+            response_id=generated.response_id,
+            model=generated.model,
+            usage=generated.usage,
+            research_summary=generated.research_summary,
+            retry_count=generated.retry_count,
+            stage_counts=stage_counts,
         )
 
     @staticmethod
@@ -601,8 +668,10 @@ class AdaptiveLLMMicroBrain:
         if plan.action == "COMBINE":
             if set(spec.parent_ids) != set(plan.parent_ids):
                 return "COMBINE proposal must use both planned parents"
-            if not spec.interaction_feature:
+            if spec.expression is None and not spec.interaction_feature:
                 return "COMBINE proposal must be an interaction"
+            if spec.expression is not None and len(spec.required_features) < 2:
+                return "COMBINE expression must use two information sources"
             if infer_mechanism(spec) != "CROSS_DOMAIN_REGIME":
                 return "COMBINE proposal must remain cross-domain"
             return None

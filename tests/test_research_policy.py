@@ -168,29 +168,35 @@ def test_parent_pool_clusters_correlated_signals_and_preserves_historical_breadt
     pool = ParentPool(capacity=1, correlation_threshold=0.90)
 
     signals["first"] = base
-    assert pool.add(artifact("first", 0.01), base, signals, dates).status == "added"
+    first = pool.add(artifact("first", 0.01), base, signals, dates)
+    assert first.status == "added"
+    assert first.new_cluster
     signals["weaker"] = opposite
     weaker = pool.add(artifact("weaker", 0.005), opposite, signals, dates)
     assert weaker.status == "suppressed"
+    assert not weaker.new_cluster
     assert weaker.representative_id == "first"
     signals["stronger"] = opposite
     stronger = pool.add(artifact("stronger", 0.02), opposite, signals, dates)
     assert stronger.status == "replaced"
+    assert not stronger.new_cluster
     assert stronger.evicted_ids == ("first",)
     signals["different"] = independent
-    pool.add(artifact("different", 0.001), independent, signals, dates)
+    different = pool.add(artifact("different", 0.001), independent, signals, dates)
+    assert different.new_cluster
     stats = pool.cluster_stats()["PRICE_TREND"]
     assert stats["parent_candidates"] == 4
     assert stats["unique_clusters"] == 2
     assert stats["active_representatives"] == 1
     assert list(pool.items) == ["stronger"]
     signals["other_mechanism"] = base
-    pool.add(
+    other = pool.add(
         artifact("other_mechanism", 0.03, "FUNDAMENTAL_VALUE"),
         base,
         signals,
         dates,
     )
+    assert other.new_cluster
     assert pool.cluster_stats()["FUNDAMENTAL_VALUE"]["unique_clusters"] == 1
     assert pool.cluster_stats()["PRICE_TREND"]["unique_clusters"] == 2
 

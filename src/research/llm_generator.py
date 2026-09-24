@@ -6,9 +6,9 @@ import json
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Literal, Union
+from typing import Literal, Union, get_args
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, root_validator, validator
 
 from src.factors.expression import Expr, expr_from_dict, validate_expression
 from src.factors.operator_registry import operator_catalog
@@ -35,6 +35,26 @@ FeatureName = Literal[
     "raw_close",
     "raw_volume",
 ]
+WindowedFeatureName = Literal[
+    "return",
+    "volatility",
+    "volume_shock",
+    "distance_to_high",
+    "news_volume",
+]
+ScalarFeatureName = Literal[
+    "after_tax_roe",
+    "operating_margin",
+    "profit_margin",
+    "earnings_yield",
+    "asset_growth",
+    "raw_open",
+    "raw_high",
+    "raw_low",
+    "raw_close",
+    "raw_volume",
+]
+AllowedFeatureWindow = Literal[1, 5, 10, 20, 60]
 TimeSeriesOperator = Literal["identity", "rolling_mean", "vol_adjust"]
 CrossSectionalOperator = Literal[
     "rank", "zscore", "winsorize", "winsorize_zscore", "sign"
@@ -90,10 +110,18 @@ class InteractionFactorProposal(ProposalEvidence):
     interaction_window: int | None
 
 
-class ExpressionFeatureProposal(BaseModel):
+class WindowedFeatureProposal(BaseModel):
     kind: Literal["feature"]
-    name: FeatureName
-    window: int | None = None
+    name: WindowedFeatureName
+    window: AllowedFeatureWindow
+
+    class Config:
+        extra = "forbid"
+
+
+class ScalarFeatureProposal(BaseModel):
+    kind: Literal["feature"]
+    name: ScalarFeatureName
 
     class Config:
         extra = "forbid"
@@ -107,38 +135,290 @@ class ExpressionConstantProposal(BaseModel):
         extra = "forbid"
 
 
-class ExpressionParams(BaseModel):
-    """Closed parameter object for strict Responses API schemas."""
+class EmptyParams(BaseModel):
+    class Config:
+        extra = "forbid"
 
-    window: int | None = None
-    halflife: float | None = None
-    periods: int | None = None
-    eps: float | None = None
-    lower: float | None = None
-    upper: float | None = None
-    group: Literal["sector", "subindustry"] | None = None
-    min_group_size: int | None = None
+
+class WindowParams(BaseModel):
+    window: AllowedFeatureWindow
 
     class Config:
         extra = "forbid"
 
 
-class ExpressionOpProposal(BaseModel):
+class PeriodParams(BaseModel):
+    periods: int
+
+    @validator("periods")
+    def positive_periods(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("periods must be positive")
+        return value
+
+    class Config:
+        extra = "forbid"
+
+
+class EWMAParams(BaseModel):
+    halflife: float
+
+    @validator("halflife")
+    def positive_halflife(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("halflife must be positive")
+        return value
+
+    class Config:
+        extra = "forbid"
+
+
+class SafeDivParams(BaseModel):
+    eps: float
+
+    @validator("eps")
+    def positive_eps(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("eps must be positive")
+        return value
+
+    class Config:
+        extra = "forbid"
+
+
+class ClipParams(BaseModel):
+    lower: float
+    upper: float
+
+    @root_validator
+    def ordered_bounds(cls, values: dict) -> dict:
+        lower = values.get("lower")
+        upper = values.get("upper")
+        if lower is not None and upper is not None and lower >= upper:
+            raise ValueError("clip requires lower < upper")
+        return values
+
+    class Config:
+        extra = "forbid"
+
+
+class GroupParams(BaseModel):
+    group: Literal["sector", "subindustry"]
+    min_group_size: int
+
+    @validator("min_group_size")
+    def positive_group_size(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("min_group_size must be positive")
+        return value
+
+    class Config:
+        extra = "forbid"
+
+
+class NoParamUnaryOp(BaseModel):
     kind: Literal["op"]
-    name: str
+    name: Literal[
+        "neg",
+        "abs",
+        "sign",
+        "cs_rank",
+        "cs_zscore",
+        "winsorize",
+        "winsorize_zscore",
+    ]
     args: list["ExpressionNode"]
-    params: ExpressionParams
+    params: EmptyParams
+
+    class Config:
+        extra = "forbid"
+
+
+class BinaryArithmeticOp(BaseModel):
+    kind: Literal["op"]
+    name: Literal["add", "sub", "mul"]
+    args: list["ExpressionNode"]
+    params: EmptyParams
+
+    class Config:
+        extra = "forbid"
+
+
+class RollingUnaryOp(BaseModel):
+    kind: Literal["op"]
+    name: Literal[
+        "rolling_sum",
+        "rolling_mean",
+        "rolling_std",
+        "rolling_min",
+        "rolling_max",
+        "ts_rank",
+        "ts_zscore",
+        "decay_linear",
+    ]
+    args: list["ExpressionNode"]
+    params: WindowParams
+
+    class Config:
+        extra = "forbid"
+
+
+class RollingPairOp(BaseModel):
+    kind: Literal["op"]
+    name: Literal["rolling_corr", "rolling_cov"]
+    args: list["ExpressionNode"]
+    params: WindowParams
+
+    class Config:
+        extra = "forbid"
+
+
+class LagDeltaOp(BaseModel):
+    kind: Literal["op"]
+    name: Literal["lag", "delta"]
+    args: list["ExpressionNode"]
+    params: PeriodParams
+
+    class Config:
+        extra = "forbid"
+
+
+class EWMAOp(BaseModel):
+    kind: Literal["op"]
+    name: Literal["ewma"]
+    args: list["ExpressionNode"]
+    params: EWMAParams
+
+    class Config:
+        extra = "forbid"
+
+
+class SafeDivOp(BaseModel):
+    kind: Literal["op"]
+    name: Literal["safe_div"]
+    args: list["ExpressionNode"]
+    params: SafeDivParams
+
+    class Config:
+        extra = "forbid"
+
+
+class ClipOp(BaseModel):
+    kind: Literal["op"]
+    name: Literal["clip"]
+    args: list["ExpressionNode"]
+    params: ClipParams
+
+    class Config:
+        extra = "forbid"
+
+
+class GroupOp(BaseModel):
+    kind: Literal["op"]
+    name: Literal["group_rank", "group_zscore", "group_neutralize"]
+    args: list["ExpressionNode"]
+    params: GroupParams
 
     class Config:
         extra = "forbid"
 
 
 ExpressionNode = Union[
-    ExpressionFeatureProposal,
+    WindowedFeatureProposal,
+    ScalarFeatureProposal,
     ExpressionConstantProposal,
-    ExpressionOpProposal,
+    NoParamUnaryOp,
+    BinaryArithmeticOp,
+    RollingUnaryOp,
+    RollingPairOp,
+    LagDeltaOp,
+    EWMAOp,
+    SafeDivOp,
+    ClipOp,
+    GroupOp,
 ]
-ExpressionOpProposal.update_forward_refs()
+
+for _node_model in (
+    NoParamUnaryOp,
+    BinaryArithmeticOp,
+    RollingUnaryOp,
+    RollingPairOp,
+    LagDeltaOp,
+    EWMAOp,
+    SafeDivOp,
+    ClipOp,
+    GroupOp,
+):
+    _node_model.update_forward_refs(ExpressionNode=ExpressionNode)
+
+
+OPERATOR_PROPOSAL_MODELS = (
+    NoParamUnaryOp,
+    BinaryArithmeticOp,
+    RollingUnaryOp,
+    RollingPairOp,
+    LagDeltaOp,
+    EWMAOp,
+    SafeDivOp,
+    ClipOp,
+    GroupOp,
+)
+
+
+def _operator_param_keys() -> dict[str, frozenset[str]]:
+    mapping: dict[str, frozenset[str]] = {}
+    for model in OPERATOR_PROPOSAL_MODELS:
+        names = get_args(model.__fields__["name"].outer_type_)
+        params_model = model.__fields__["params"].type_
+        keys = frozenset(params_model.__fields__)
+        for name in names:
+            mapping[str(name)] = keys
+    return mapping
+
+
+LLM_OPERATOR_PARAM_KEYS = _operator_param_keys()
+
+
+class MicroIdeaEvidence(BaseModel):
+    """Adaptive Micro output; Macro-owned routing fields are intentionally absent."""
+
+    factor_id: str
+    hypothesis: str
+    direction: Literal[-1, 1]
+    mutation_reason: str
+    evidence_factor_ids: list[str]
+    targeted_failure: Literal[
+        "none",
+        "unstable_ic",
+        "weak_signal",
+        "low_statistical_significance",
+        "weak_monetization",
+        "cost_sensitivity",
+        "excessive_turnover",
+        "excessive_drawdown",
+        "redundancy",
+        "insufficient_coverage",
+        "invalid_dsl",
+        "unsupported_group",
+    ]
+    expected_metric_effect: str
+    falsification_condition: str
+
+    class Config:
+        extra = "forbid"
+
+
+class AdaptiveExpressionFactorProposal(MicroIdeaEvidence):
+    recipe_kind: Literal["expression"]
+    expression: ExpressionNode
+
+
+class AdaptiveFactorProposalBatch(BaseModel):
+    research_summary: str
+    proposals: list[AdaptiveExpressionFactorProposal]
+
+    class Config:
+        extra = "forbid"
 
 
 class ExpressionFactorProposal(ProposalEvidence):
@@ -174,6 +454,8 @@ class LLMGenerationResult:
     model: str | None = None
     usage: dict = field(default_factory=dict)
     research_summary: str | None = None
+    retry_count: int = 0
+    stage_counts: dict[str, int] = field(default_factory=dict)
 
 
 SYSTEM_CONTRACT = """You are the constrained hypothesis policy for an autonomous
@@ -187,19 +469,23 @@ discuss, or optimize against it.
 
 Generate no more than the supplied proposal limit. When promoted parents exist, allocate
 roughly 60-80% to evidence-based exploitation or failure repair and 20-40% to exploration.
-An exploitation proposal must name a PROMOTE parent. A failure_repair proposal must name
+When generation_contract is present, Macro and local code own action, mechanism,
+parent_ids, family, proposal_type, and candidate budget. Those fields are deliberately
+absent from the adaptive Micro schema; do not try to reproduce or alter them. The
+following lineage rules apply only to the legacy free-form schema: an exploitation
+proposal must name a PROMOTE parent. A failure_repair proposal must name
 an eligible HOLD or PROMOTE parent and a non-"none" targeted_failure. An exploration
 proposal must always use empty parent_ids, even when its evidence_factor_ids cite prior
 tests. If there are no promoted parents, use failure_repair on eligible HOLD parents and
 parent-free exploration; do not emit exploitation proposals.
 
-The recipe schema is a strict union. Choose recipe_kind="single" for price, fundamental,
-or news proposals; that object has no interaction fields. Choose recipe_kind="interaction"
-only for an interaction-family recipe; that object requires interaction_feature. Fundamental
-features never have a primitive window; windowed price/news features require one allowed
-window. For recipe_kind="expression", emit a typed AST using kind=feature/constant/op and
-the registry catalog; do not emit a free-form expression string. A transform window belongs
-in operator params and is distinct from a Feature window.
+Use only recipe kinds exposed by the supplied structured schema. The adaptive Micro schema
+accepts recipe_kind="expression" only and requires a typed AST using
+kind=feature/constant/op and the registry catalog; never emit a free-form expression string.
+The legacy schema may also expose single or interaction recipes. Fundamental features never
+have a primitive window; windowed price/news features require one allowed window. A
+transform window belongs in its operator-specific params and is distinct from a Feature
+window.
 
 Integrity failures have distinct responses: invalid_dsl requires a fresh valid registry
 expression; unsupported_group requires only available canonical groups; leakage formulas
@@ -247,6 +533,36 @@ class LLMFactorGenerator:
         from openai import OpenAI
 
         return OpenAI(api_key=self._api_key())
+
+    def _proposal_limit(self, research_plan: dict | None) -> int:
+        configured = int(self.config.get("max_proposals_per_generation", 6))
+        if research_plan is None:
+            return configured
+        return min(configured, max(0, int(research_plan.get("candidate_budget", 0))))
+
+    def _generation_contract(self, research_plan: dict | None) -> dict | None:
+        if research_plan is None:
+            return None
+        action = str(research_plan["action"])
+        parent_ids = list(research_plan.get("parent_ids", ()))
+        return {
+            "action": action,
+            "mechanism": (
+                "CROSS_DOMAIN_REGIME"
+                if action == "COMBINE"
+                else str(research_plan["mechanism"])
+            ),
+            "planned_parent_ids": parent_ids,
+            "proposal_slots": self._proposal_limit(research_plan),
+            "must_be_parent_free": action == "PIVOT",
+            "must_be_interaction": action == "COMBINE",
+            "routing_fields_are_local": [
+                "parent_ids",
+                "mechanism",
+                "family",
+                "proposal_type",
+            ],
+        }
 
     @staticmethod
     def _record_summary(record: ExperimentRecord) -> dict:
@@ -307,9 +623,43 @@ class LLMFactorGenerator:
             for record in recent_records
             if "lookahead_or_leakage" in record.failure_codes
         }
+        proposal_limit = self._proposal_limit(research_plan)
+        generation_contract = self._generation_contract(research_plan)
+        field_rules = (
+            {
+                "adaptive_recipe": "recipe_kind=expression with a typed AST",
+                "windowed_features": (
+                    "return/volatility/volume_shock/distance_to_high/news_volume "
+                    "require one of 1/5/10/20/60"
+                ),
+                "scalar_features": (
+                    "fundamental and raw price fields have no primitive window field"
+                ),
+                "operator_params": (
+                    "each operator accepts only the parameter object encoded by its "
+                    "structured schema"
+                ),
+            }
+            if research_plan is not None
+            else {
+                "single_feature_family": (
+                    "recipe_kind=single and family=price/fundamental/news; this "
+                    "schema has no interaction fields"
+                ),
+                "interaction_family": (
+                    "recipe_kind=interaction and family=interaction; "
+                    "interaction_feature is required"
+                ),
+                "fundamental_window": (
+                    "after_tax_roe/operating_margin/profit_margin/earnings_yield/"
+                    "asset_growth require window=null"
+                ),
+            }
+        )
         return {
             "generation_to_propose": generation,
             "research_plan": research_plan,
+            "generation_contract": generation_contract,
             "research_state": {
                 "promoted_factor_ids": state.promoted_factor_ids[-20:],
                 "held_factor_ids": state.held_factor_ids[-20:],
@@ -369,17 +719,16 @@ class LLMFactorGenerator:
                 "operators": operator_catalog(),
                 "group_fields": ["sector", "subindustry"],
                 "max_complexity": int(self.config.get("max_complexity", 4)),
-                "max_proposals": int(
-                    self.config.get("max_proposals_per_generation", 6)
-                ),
+                "max_proposals": proposal_limit,
             },
             "constraints": {
                 "holdout_year": "withheld; never reference or infer it",
                 "raw_data_available_to_llm": False,
                 "proposal_mix": "roughly 60-80% exploitation and 20-40% exploration",
                 "plan_binding": (
-                    "Every proposal must implement the supplied research_plan action, "
-                    "mechanism, parents, and candidate budget when a plan is present."
+                    "When generation_contract is present, local code injects action, "
+                    "mechanism, parents, family, proposal type, and candidate budget. "
+                    "Micro must not reproduce or alter those fields."
                 ),
                 "proposal_type_rules": {
                     "exploitation": "PROMOTE parent required",
@@ -392,20 +741,7 @@ class LLMFactorGenerator:
                         "factors"
                     ),
                 },
-                "field_rules": {
-                    "single_feature_family": (
-                        "recipe_kind=single and family=price/fundamental/news; this "
-                        "schema has no interaction fields"
-                    ),
-                    "interaction_family": (
-                        "recipe_kind=interaction and family=interaction; "
-                        "interaction_feature is required"
-                    ),
-                    "fundamental_window": (
-                        "after_tax_roe/operating_margin/profit_margin/earnings_yield/"
-                        "asset_growth require window=null"
-                    ),
-                },
+                "field_rules": field_rules,
                 "forbidden": [
                     "future returns",
                     "future windows",
@@ -416,7 +752,184 @@ class LLMFactorGenerator:
             },
         }
 
-    def _validate_proposals(
+    @staticmethod
+    def _family_for_mechanism(mechanism: str) -> str:
+        if mechanism in {
+            "PRICE_TREND",
+            "PRICE_REVERSAL",
+            "VOLATILITY",
+            "PRICE_VOLUME",
+        }:
+            return "price"
+        if mechanism in {"FUNDAMENTAL_VALUE", "FUNDAMENTAL_QUALITY"}:
+            return "fundamental"
+        if mechanism == "NEWS_ATTENTION":
+            return "news"
+        return "interaction"
+
+    def _validate_adaptive_proposals(
+        self,
+        batch: AdaptiveFactorProposalBatch,
+        *,
+        generation: int,
+        research_plan: dict,
+        parent_specs: dict[str, FactorSpec],
+        tested_ids: set[str],
+        prior_formulas: set[str],
+        quarantined_ids: set[str] | None = None,
+    ) -> tuple[list[FactorSpec], list[str], dict[str, int]]:
+        candidates: list[FactorSpec] = []
+        rejected: list[str] = []
+        stage_counts = {
+            "raw_proposals": len(batch.proposals),
+            "schema_valid": len(batch.proposals),
+            "plan_valid": 0,
+            "dsl_valid": 0,
+            "accepted_llm": 0,
+            "structured_parse_failure": 0,
+            "schema_rejection": 0,
+            "plan_binding_rejection": 0,
+            "duplicate_rejection": 0,
+            "dsl_semantic_rejection": 0,
+            "complexity_rejection": 0,
+        }
+        action = str(research_plan.get("action"))
+        if action == "STOP":
+            stage_counts["plan_binding_rejection"] = len(batch.proposals)
+            return [], ["Micro Brain cannot generate candidates for STOP"], stage_counts
+        planned_parents = tuple(research_plan.get("parent_ids", ()))
+        expected_parent_count = {"PIVOT": 0, "IMPROVE": 1, "COMBINE": 2}.get(
+            action
+        )
+        if expected_parent_count is None or len(planned_parents) != expected_parent_count:
+            stage_counts["plan_binding_rejection"] = len(batch.proposals)
+            return (
+                [],
+                [f"Invalid {action} plan parent contract: {planned_parents}"],
+                stage_counts,
+            )
+        missing_parents = [
+            parent for parent in planned_parents if parent not in parent_specs
+        ]
+        if missing_parents:
+            stage_counts["plan_binding_rejection"] = len(batch.proposals)
+            return (
+                [],
+                [f"Planned parents are not eligible: {missing_parents}"],
+                stage_counts,
+            )
+
+        mechanism = (
+            "CROSS_DOMAIN_REGIME"
+            if action == "COMBINE"
+            else str(research_plan.get("mechanism"))
+        )
+        family = self._family_for_mechanism(mechanism)
+        proposal_type = {
+            "PIVOT": "xalpha_pivot",
+            "IMPROVE": "xalpha_refinement",
+            "COMBINE": "xalpha_crossover",
+        }[action]
+        proposal_limit = self._proposal_limit(research_plan)
+        max_complexity = int(self.config.get("max_complexity", 4))
+        allowed_windows = set(self.config.get("allowed_windows", [1, 5, 10, 20, 60]))
+        seen_ids = set(tested_ids)
+        seen_formulas = set(prior_formulas)
+        quarantined_ids = quarantined_ids or set()
+
+        for proposal in batch.proposals[:proposal_limit]:
+            reason_prefix = proposal.factor_id or "unnamed"
+            if not re.fullmatch(r"[A-Za-z0-9_]+", proposal.factor_id):
+                rejected.append(f"{reason_prefix}: invalid factor_id")
+                stage_counts["schema_rejection"] += 1
+                continue
+            if proposal.factor_id in seen_ids:
+                rejected.append(f"{reason_prefix}: duplicate factor_id")
+                stage_counts["duplicate_rejection"] += 1
+                continue
+            if len(proposal.hypothesis.strip()) < 20:
+                rejected.append(f"{reason_prefix}: hypothesis is too short")
+                stage_counts["schema_rejection"] += 1
+                continue
+            if any(
+                evidence not in tested_ids for evidence in proposal.evidence_factor_ids
+            ):
+                rejected.append(f"{reason_prefix}: evidence factor was not tested")
+                stage_counts["plan_binding_rejection"] += 1
+                continue
+            if any(
+                evidence in quarantined_ids for evidence in proposal.evidence_factor_ids
+            ):
+                rejected.append(f"{reason_prefix}: leakage evidence is quarantined")
+                stage_counts["plan_binding_rejection"] += 1
+                continue
+            stage_counts["plan_valid"] += 1
+
+            try:
+                expression_payload = proposal.expression.dict(exclude_none=True)
+                expression = expr_from_dict(expression_payload)
+                expression_check = validate_expression(
+                    expression,
+                    allowed_features=set(FeatureName.__args__),
+                    allowed_windows=allowed_windows,
+                    allowed_groups={"sector", "subindustry"},
+                    max_operator_nodes=max_complexity + 2,
+                )
+                if not expression_check.passed:
+                    rejected.append(
+                        f"{reason_prefix}: " + "; ".join(expression_check.reasons)
+                    )
+                    stage_counts["dsl_semantic_rejection"] += 1
+                    continue
+                if action == "COMBINE" and len(expression.required_features()) < 2:
+                    rejected.append(
+                        f"{reason_prefix}: COMBINE expression needs two information sources"
+                    )
+                    stage_counts["plan_binding_rejection"] += 1
+                    continue
+                stage_counts["dsl_valid"] += 1
+                spec = FactorSpec(
+                    factor_id=proposal.factor_id,
+                    generation=generation,
+                    parent_ids=planned_parents,
+                    family=family,
+                    mechanism=mechanism,
+                    hypothesis=proposal.hypothesis,
+                    base_feature="",
+                    expression=expression,
+                    direction=proposal.direction,
+                    mutation_reason=proposal.mutation_reason,
+                    demonstration_only=False,
+                    proposal_type=proposal_type,
+                    evidence_factor_ids=tuple(proposal.evidence_factor_ids),
+                    targeted_failure=(
+                        None
+                        if proposal.targeted_failure == "none"
+                        else proposal.targeted_failure
+                    ),
+                    expected_metric_effect=proposal.expected_metric_effect,
+                    falsification_condition=proposal.falsification_condition,
+                )
+            except (TypeError, ValueError) as error:
+                rejected.append(f"{reason_prefix}: FactorSpec rejected: {error}")
+                stage_counts["dsl_semantic_rejection"] += 1
+                continue
+            if spec.complexity > max_complexity:
+                rejected.append(f"{reason_prefix}: complexity cap exceeded")
+                stage_counts["complexity_rejection"] += 1
+                continue
+            if spec.canonical_formula in seen_formulas:
+                rejected.append(f"{reason_prefix}: duplicate canonical formula")
+                stage_counts["duplicate_rejection"] += 1
+                continue
+            candidates.append(spec)
+            seen_ids.add(spec.factor_id)
+            seen_formulas.add(spec.canonical_formula)
+
+        stage_counts["accepted_llm"] = len(candidates)
+        return candidates, rejected, stage_counts
+
+    def _validate_legacy_proposals(
         self,
         batch: FactorProposalBatch,
         *,
@@ -647,12 +1160,18 @@ class LLMFactorGenerator:
             parent_decisions=parent_decisions,
             research_plan=research_plan,
         )
-        try:
-            response = self._get_client().responses.parse(
+        text_format = (
+            AdaptiveFactorProposalBatch
+            if research_plan is not None
+            else FactorProposalBatch
+        )
+
+        def call_structured(instructions: str):
+            return self._get_client().responses.parse(
                 model=self.model,
-                instructions=SYSTEM_CONTRACT,
+                instructions=instructions,
                 input=json.dumps(context, sort_keys=True, default=str),
-                text_format=FactorProposalBatch,
+                text_format=text_format,
                 reasoning={
                     "mode": self.config.get("reasoning_mode", "standard"),
                     "effort": self.config.get("reasoning_effort", "low"),
@@ -665,25 +1184,51 @@ class LLMFactorGenerator:
                     "prompt_cache_key", "factor-autoresearch-v1"
                 ),
             )
+
+        retry_count = 0
+        try:
+            response = call_structured(SYSTEM_CONTRACT)
             batch = response.output_parsed
-        except (
-            Exception
-        ) as error:  # API failures must not corrupt deterministic research.
-            # A model can return a response envelope whose structured text is not
-            # parseable JSON. Treat that as a model-output failure, not as a reason
-            # to abort an otherwise auditable research trajectory; the controller
-            # will use its constrained novelty rescue for this round.
-            if isinstance(error, ValidationError):
+        except ValidationError:
+            retry_count = 1
+            repair_instruction = SYSTEM_CONTRACT + """
+
+The previous structured response failed schema parsing. Use the exact same research
+plan and objective. Return only a valid object matching the supplied structured schema.
+Do not add fields that are absent from the schema. Do not change routing fields owned by
+the generation contract."""
+            try:
+                response = call_structured(repair_instruction)
+                batch = response.output_parsed
+            except ValidationError as error:
                 return LLMGenerationResult(
                     (),
                     False,
                     f"invalid_structured_output:{type(error).__name__}",
+                    retry_count=retry_count,
+                    stage_counts={"structured_parse_failure": 2},
                 )
+            except Exception as error:
+                if self.config.get("required", False):
+                    raise
+                return LLMGenerationResult(
+                    (),
+                    False,
+                    f"api_error:{type(error).__name__}",
+                    retry_count=retry_count,
+                    stage_counts={"structured_parse_failure": 1},
+                )
+        except Exception as error:  # API failures must not corrupt deterministic research.
             if self.config.get("required", False):
                 raise
             return LLMGenerationResult((), False, f"api_error:{type(error).__name__}")
         if batch is None:
-            return LLMGenerationResult((), False, "model_refusal_or_empty_output")
+            return LLMGenerationResult(
+                (),
+                False,
+                "model_refusal_or_empty_output",
+                retry_count=retry_count,
+            )
 
         usage_object = getattr(response, "usage", None)
         usage = usage_object.model_dump() if hasattr(usage_object, "model_dump") else {}
@@ -694,20 +1239,50 @@ class LLMFactorGenerator:
             | set(state.best_patterns)
             | set(state.failed_patterns)
         )
-        candidates, rejected = self._validate_proposals(
-            batch,
-            generation=generation,
-            parent_specs=parent_specs,
-            parent_decisions=parent_decisions
-            or {factor_id: "PROMOTE" for factor_id in parent_specs},
-            tested_ids=tested_ids,
-            prior_formulas=prior_formulas,
-            quarantined_ids={
-                record.factor_id
-                for record in recent_records
-                if "lookahead_or_leakage" in record.failure_codes
-            },
-        )
+        quarantined_ids = {
+            record.factor_id
+            for record in recent_records
+            if "lookahead_or_leakage" in record.failure_codes
+        }
+        if research_plan is not None:
+            candidates, rejected, stage_counts = self._validate_adaptive_proposals(
+                batch,
+                generation=generation,
+                research_plan=research_plan,
+                parent_specs=parent_specs,
+                tested_ids=tested_ids,
+                prior_formulas=prior_formulas,
+                quarantined_ids=quarantined_ids,
+            )
+        else:
+            candidates, rejected = self._validate_legacy_proposals(
+                batch,
+                generation=generation,
+                parent_specs=parent_specs,
+                parent_decisions=parent_decisions
+                or {factor_id: "PROMOTE" for factor_id in parent_specs},
+                tested_ids=tested_ids,
+                prior_formulas=prior_formulas,
+                quarantined_ids=quarantined_ids,
+            )
+            stage_counts = {
+                "raw_proposals": len(batch.proposals),
+                "schema_valid": len(batch.proposals),
+                "plan_valid": len(batch.proposals),
+                "dsl_valid": len(candidates),
+                "accepted_llm": len(candidates),
+                "structured_parse_failure": 0,
+                "schema_rejection": 0,
+                "plan_binding_rejection": 0,
+                "duplicate_rejection": sum(
+                    "duplicate" in reason.lower() for reason in rejected
+                ),
+                "dsl_semantic_rejection": len(rejected),
+                "complexity_rejection": sum(
+                    "complexity" in reason.lower() for reason in rejected
+                ),
+            }
+        stage_counts["structured_parse_failure"] = retry_count
         if not candidates:
             return LLMGenerationResult(
                 (),
@@ -719,6 +1294,8 @@ class LLMFactorGenerator:
                 model=self.model,
                 usage=usage,
                 research_summary=batch.research_summary,
+                retry_count=retry_count,
+                stage_counts=stage_counts,
             )
         return LLMGenerationResult(
             tuple(candidates),
@@ -730,4 +1307,6 @@ class LLMFactorGenerator:
             model=self.model,
             usage=usage,
             research_summary=batch.research_summary,
+            retry_count=retry_count,
+            stage_counts=stage_counts,
         )

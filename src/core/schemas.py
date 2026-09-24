@@ -160,6 +160,9 @@ class ResearchPlan:
     parent_ids: tuple[str, ...]
     reason: str
     candidate_budget: int
+    targeted_failure: str | None = None
+    target_metric: str | None = None
+    preserve_metric: str | None = None
 
     def __post_init__(self) -> None:
         if self.action not in {"IMPROVE", "COMBINE", "PIVOT", "STOP"}:
@@ -180,6 +183,8 @@ class ResearchOutcome:
     tier: str
     mechanism: str
     action: str
+    elite_gate_diagnostic: dict[str, Any] = field(default_factory=dict)
+    repair_result: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.tier not in {"RETIRED", "PARENT", "ELITE"}:
@@ -199,16 +204,21 @@ class ResearchOutcome:
             "metrics": {
                 "mean_rank_ic": self.record.mean_rank_ic,
                 "newey_west_tstat": self.record.ic_tstat,
+                "positive_fold_count": self.record.positive_fold_count,
                 "net_sharpe": self.record.long_short_sharpe,
                 "high_cost_sharpe": self.record.high_cost_sharpe,
                 "turnover": self.record.turnover,
                 "max_drawdown": self.record.max_drawdown,
+                "redundancy_corr": self.record.redundancy_corr,
+                "residual_ic": self.record.residual_ic,
                 "fold_ic_sign_consistency": self.record.fold_ic_sign_consistency,
                 "multi_horizon_mean_ic": self.record.multi_horizon_mean_ic,
             },
             "decision": self.tier,
             "decision_reasons": list(self.record.reasons),
             "parent_ids": list(self.spec.parent_ids),
+            "elite_gate_diagnostic": self.elite_gate_diagnostic,
+            "repair_result": self.repair_result,
         }
 
 
@@ -224,6 +234,12 @@ class ResearchMemory:
     current_theme: str | None = None
     current_budget: int = 0
     rounds_without_improvement: int = 0
+    rounds_without_parent: int = 0
+    rounds_without_new_cluster: int = 0
+    rounds_without_elite: int = 0
+    rounds_without_best_quality_improvement: int = 0
+    best_quality_metrics: dict[str, float] = field(default_factory=dict)
+    best_quality_mechanism: str | None = None
     proposal_failure_counts: dict[str, int] = field(default_factory=dict)
     parent_cluster_stats: dict[str, dict[str, Any]] = field(default_factory=dict)
     stopped: bool = False

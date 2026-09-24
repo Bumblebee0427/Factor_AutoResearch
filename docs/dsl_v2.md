@@ -78,11 +78,14 @@ recipes share the same recursive evaluator.
 
 ## LLM boundary
 
-The restricted LLM schema supports both the existing flat recipe union and
-`recipe_kind="expression"`. An expression proposal contains only typed `feature`, `constant`,
-and `op` nodes. The operator catalog in the prompt is generated from the registry. Local
-AST validation, parent binding, formula deduplication, complexity limits, and dynamic
-leakage checks remain authoritative.
+The legacy LLM path supports the existing flat recipe union and
+`recipe_kind="expression"`. The adaptive Micro path uses a narrower expression-only schema.
+Windowed and scalar feature nodes are separate types, and every operator family has its own
+parameter model, so `after_tax_roe(window=20)`, `return(window=0)`, and
+`cs_rank(window=20)` fail schema parsing. The operator catalog in the prompt is generated
+from the registry, and a consistency test prevents the registry and proposal schema from
+drifting. Local AST validation, plan binding, formula deduplication, complexity limits, and
+dynamic leakage checks remain authoritative.
 
 ## Leakage and reproducibility
 
