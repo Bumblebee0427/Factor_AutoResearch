@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Make one minimal structured GPT-5.6 Luna request without loading market data."""
+"""Make one minimal structured model request without loading market data."""
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -19,8 +20,13 @@ from src.utils.config import load_config
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--model", help="Override the configured model for this smoke request.")
+    args = parser.parse_args()
     config = load_config(PROJECT_ROOT / "config.yaml")
     llm_config = dict(config["llm"])
+    if args.model:
+        llm_config["resolved_model"] = args.model
     llm_config["required"] = True
     llm_config["max_proposals_per_generation"] = 2
     llm_config["max_complexity"] = int(config["gates"]["max_complexity"])
